@@ -9,17 +9,24 @@ optionally logging it to a UTC-timestamped text file.
 
 Usage
 ------
-    # List available audio input devices
-    python navtex_live_decode.py --list-devices
+All input-source settings and tunable parameters live in a TOML config
+file, under one or more named `[profile]` sections -- see navtex_config.py
+for the full schema and navtex.toml.example for a starting point.
 
-    # Decode live from the default input device
-    python navtex_live_decode.py --live
+    # List available audio input devices (standalone diagnostic; exits
+    # immediately, no profile/config needed)
+    python navtex_decode.py --list-devices
 
-    # Decode live from a specific device, logging to a directory
-    python navtex_live_decode.py --live --device 2 --log-dir logs/
+    # Decode using the [my_profile] section of the default config file
+    # (navtex.toml in the current directory)
+    python navtex_decode.py my_profile
 
-    # Decode a WAV file, with logging
-    python navtex_live_decode.py recording.wav --log-dir logs/
+    # Decode using a specific config file
+    python navtex_decode.py my_profile --config /path/to/myconfig.toml
+
+Each profile's `mode` key ("file" or "live") determines whether it reads
+a WAV file (`wav_file`) or a live input device (`device`, optional);
+`log_dir` (optional, any mode) enables logging to a directory.
 
 Log files are named navtex_<UTC timestamp>.txt, e.g.
 navtex_20260813_154210Z.txt -- timestamped by when decoding started, not
@@ -49,6 +56,7 @@ from collections import deque
 from pathlib import Path
 from typing import Deque, Optional, TextIO
 
+from navtex_config import ConfigError, Profile, load_profile
 from navtex_step1_sampling_windowing import (
     AudioSource,
     FileSource,
@@ -58,6 +66,7 @@ from navtex_step1_sampling_windowing import (
 )
 from navtex_step2_tone_detection import ToneDetector
 from navtex_soft_fec_combine import SoftBitSync as BitSync
+from navtex_soft_fec_combine import SoftCharacterGrouper, SoftFecCombiner
 from navtex_soft_fec_combine import decode_bit_stream_soft as decode_bit_stream
 
 
@@ -294,7 +303,7 @@ def make_log_file(log_dir: str, source_description: str,
     return TimestampedLineWriter(path, f, tracker)
 
 
-def run(source: AudioSource, log_dir: Optional[str], source_description: str) -> None:
+def run(source: AudioSource, profile: Profile, source_description: str) -> None:
     # Same reasoning as make_log_file's newline="" -- decoded text already
     # contains its own literal '\r'/'\n' (CR and LF are independent CCIR
     # 476 codewords), so Python's default text-mode translation on
@@ -311,13 +320,34 @@ def run(source: AudioSource, log_dir: Optional[str], source_description: str) ->
     except (AttributeError, ValueError):
         pass
 
-    config = NavtexConfig()
+    config = NavtexConfig(
+        sample_rate=profile.sample_rate,
+        oversample=profile.oversample,
+        window_type=profile.window_type,
+        mark_freq=profile.mark_freq,
+        space_freq=profile.space_freq,
+    )
     windower = Windower(config)
     detector = ToneDetector(config)
-    bitsync = BitSync(config)
+    bitsync = BitSync(config, loop_gain=profile.loop_gain)
 
-    tracker = SignalStrengthTracker()
-    log_file = make_log_file(log_dir, source_description, tracker) if log_dir else None
+    grouper = SoftCharacterGrouper(
+        sync_window=profile.sync_window,
+        acquire_threshold=profile.char_acquire_threshold,
+        drop_threshold=profile.char_drop_threshold,
+        switch_margin=profile.char_switch_margin,
+        min_groups_for_acquire=profile.min_groups_for_acquire,
+    )
+    fec = SoftFecCombiner(
+        lock_window=profile.lock_window,
+        acquire_threshold=profile.fec_acquire_threshold,
+        switch_margin=profile.fec_switch_margin,
+        min_samples_for_rate=profile.min_samples_for_rate,
+        rate_window=profile.rate_window,
+    )
+
+    tracker = SignalStrengthTracker(window=profile.signal_strength_window)
+    log_file = make_log_file(profile.log_dir, source_description, tracker) if profile.log_dir else None
 
     # Tap the bit stream here (before Step 4 consumes it) so `tracker`
     # stays current for every log line, however the pipeline downstream
@@ -328,7 +358,8 @@ def run(source: AudioSource, log_dir: Optional[str], source_description: str) ->
     )
 
     try:
-        for ch in decode_bit_stream(bit_decisions):
+        for ch in decode_bit_stream(bit_decisions, grouper=grouper, fec=fec,
+                                     phasing_burst_threshold=profile.phasing_burst_threshold):
             sys.stdout.write(ch)
             sys.stdout.flush()
             if log_file is not None:
@@ -345,25 +376,40 @@ def run(source: AudioSource, log_dir: Optional[str], source_description: str) ->
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("wav_file", nargs="?", help="WAV file to decode (omit if using --live)")
-    parser.add_argument("--live", action="store_true",
-                         help="Decode from a live audio input device instead of a file")
-    parser.add_argument("--device", default=None,
-                         help="Input device index or name substring (see --list-devices)")
+    parser.add_argument("profile", nargs="?",
+                         help="Name of the [profile] section to load from the config file")
+    parser.add_argument("--config", default="navtex.toml",
+                         help="Path to the TOML config file (default: navtex.toml)")
     parser.add_argument("--list-devices", action="store_true",
-                         help="List available audio input devices and exit")
-    parser.add_argument("--log-dir", default=None,
-                         help="Directory to write a UTC-timestamped decode log to (optional)")
+                         help="List available audio input devices and exit "
+                              "(standalone diagnostic action -- ignores --config/profile)")
     args = parser.parse_args()
 
+    # Standalone diagnostic: terminates immediately, no profile needed.
     if args.list_devices:
         list_devices()
         return
 
-    config = NavtexConfig()
+    if not args.profile:
+        parser.error("Provide a profile name (or use --list-devices)")
+        return
 
-    if args.live:
-        device = args.device
+    try:
+        profile = load_profile(args.config, args.profile)
+    except ConfigError as e:
+        parser.error(str(e))
+        return
+
+    config = NavtexConfig(
+        sample_rate=profile.sample_rate,
+        oversample=profile.oversample,
+        window_type=profile.window_type,
+        mark_freq=profile.mark_freq,
+        space_freq=profile.space_freq,
+    )
+
+    if profile.mode == "live":
+        device = profile.device
         if device is not None:
             try:
                 device = int(device)
@@ -372,15 +418,12 @@ def main() -> None:
         source: AudioSource = LiveMicSource(config, device=device)
         description = f"live audio device {device!r}" if device is not None else "live audio (default device)"
         print(f"Listening on {description}... (Ctrl+C to stop)")
-    elif args.wav_file:
-        source = FileSource(config, args.wav_file)
-        description = f"WAV file {args.wav_file!r}"
-        print(f"Decoding file: {args.wav_file}")
     else:
-        parser.error("Provide a WAV file path, or use --live for live audio input")
-        return
+        source = FileSource(config, profile.wav_file)
+        description = f"WAV file {profile.wav_file!r}"
+        print(f"Decoding file: {profile.wav_file}")
 
-    run(source, args.log_dir, description)
+    run(source, profile, description)
 
 
 if __name__ == "__main__":

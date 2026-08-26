@@ -165,8 +165,13 @@ class SoftCharacterGrouper(CharacterGrouper):
     untouched; only the per-bit bookkeeping in push_bit is extended.
     """
 
-    def __init__(self, sync_window: int = 250):
-        super().__init__(sync_window)
+    def __init__(self, sync_window: int = 250,
+                 acquire_threshold: Optional[float] = None,
+                 drop_threshold: Optional[float] = None,
+                 switch_margin: Optional[float] = None,
+                 min_groups_for_acquire: Optional[int] = None):
+        super().__init__(sync_window, acquire_threshold, drop_threshold,
+                          switch_margin, min_groups_for_acquire)
         self._group_soft: List[float] = []
 
     def push_bit(self, bit: bool, confidence: float = 1.0,
@@ -242,13 +247,18 @@ class SoftFecCombiner(FecCombiner):
 # Top-level pipeline (mirrors navtex_step4_character_decode.decode_bit_stream)
 # ---------------------------------------------------------------------------
 
-def decode_bit_stream_soft(bit_decisions: Iterator[SoftBitDecision]) -> Iterator[str]:
+def decode_bit_stream_soft(bit_decisions: Iterator[SoftBitDecision],
+                            grouper: Optional["SoftCharacterGrouper"] = None,
+                            fec: Optional["SoftFecCombiner"] = None,
+                            phasing_burst_threshold: int = 4) -> Iterator[str]:
     """Same structure/reset logic as decode_bit_stream, using the soft
     grouper/combiner. KEEP IN SYNC BY HAND with decode_bit_stream if its
     phasing-burst reset logic ever changes.
     """
-    grouper = SoftCharacterGrouper()
-    fec = SoftFecCombiner()
+    if grouper is None:
+        grouper = SoftCharacterGrouper()
+    if fec is None:
+        fec = SoftFecCombiner()
     prev_phase: Optional[int] = None
     consecutive_phasing = 0
     for bd in bit_decisions:
@@ -261,7 +271,7 @@ def decode_bit_stream_soft(bit_decisions: Iterator[SoftBitDecision]) -> Iterator
             if code in _PHASING_CODES:
                 consecutive_phasing += 1
             else:
-                if consecutive_phasing >= 4:
+                if consecutive_phasing >= phasing_burst_threshold:
                     fec.reset()
                 consecutive_phasing = 0
 

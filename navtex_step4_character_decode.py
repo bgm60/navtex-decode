@@ -265,7 +265,22 @@ class CharacterGrouper:
     # crossing rare rather than close to inevitable.
     MIN_GROUPS_FOR_ACQUIRE = 25
 
-    def __init__(self, sync_window: int = 250):
+    def __init__(self, sync_window: int = 250,
+                 acquire_threshold: Optional[float] = None,
+                 drop_threshold: Optional[float] = None,
+                 switch_margin: Optional[float] = None,
+                 min_groups_for_acquire: Optional[int] = None):
+        # Each override defaults to the class constant above when not
+        # given, so existing callers (and SoftCharacterGrouper, which
+        # only forwards sync_window) are unaffected. Set as instance
+        # attributes -- every reference elsewhere in this class already
+        # goes through `self.`, never the class name directly, so this
+        # is a complete override with no other changes needed.
+        self.ACQUIRE_THRESHOLD = self.ACQUIRE_THRESHOLD if acquire_threshold is None else acquire_threshold
+        self.DROP_THRESHOLD = self.DROP_THRESHOLD if drop_threshold is None else drop_threshold
+        self.SWITCH_MARGIN = self.SWITCH_MARGIN if switch_margin is None else switch_margin
+        self.MIN_GROUPS_FOR_ACQUIRE = (self.MIN_GROUPS_FOR_ACQUIRE if min_groups_for_acquire is None
+                                        else min_groups_for_acquire)
         self.sync = CharacterSync(sync_window)
         self._group: List[bool] = []
         self._group_confidence: List[float] = []
@@ -483,7 +498,19 @@ class FecCombiner:
     # specific bit within a codeword is wrong than testing assumed.
     ENABLE_SINGLE_BIT_CORRECTION = False
 
-    def __init__(self, lock_window: int = 15):
+    def __init__(self, lock_window: int = 15,
+                 acquire_threshold: Optional[float] = None,
+                 switch_margin: Optional[float] = None,
+                 min_samples_for_rate: Optional[int] = None,
+                 rate_window: Optional[int] = None):
+        # Same pattern as CharacterGrouper.__init__ -- override defaults
+        # to the class constant, applied before anything below that
+        # depends on RATE_WINDOW (history_len, the two _matches deques).
+        self.ACQUIRE_THRESHOLD = self.ACQUIRE_THRESHOLD if acquire_threshold is None else acquire_threshold
+        self.SWITCH_MARGIN = self.SWITCH_MARGIN if switch_margin is None else switch_margin
+        self.MIN_SAMPLES_FOR_RATE = (self.MIN_SAMPLES_FOR_RATE if min_samples_for_rate is None
+                                      else min_samples_for_rate)
+        self.RATE_WINDOW = self.RATE_WINDOW if rate_window is None else rate_window
         history_len = self.LAG + max(lock_window, self.RATE_WINDOW)
         self._history: Deque[tuple] = deque(maxlen=history_len)  # (code, confidences) pairs
         self._n = 0
@@ -716,9 +743,20 @@ class FecCombiner:
 # Top-level pipeline
 # ---------------------------------------------------------------------------
 
-def decode_bit_stream(bit_decisions: Iterator[BitDecision]) -> Iterator[str]:
-    grouper = CharacterGrouper()
-    fec = FecCombiner()
+def decode_bit_stream(bit_decisions: Iterator[BitDecision],
+                       grouper: Optional["CharacterGrouper"] = None,
+                       fec: Optional["FecCombiner"] = None,
+                       phasing_burst_threshold: int = 4) -> Iterator[str]:
+    # grouper/fec accepted as optional pre-built instances so callers
+    # (e.g. the TOML-driven CLI) can configure every tunable via their
+    # constructors rather than this function only ever using defaults.
+    # phasing_burst_threshold replaces the old bare literal `4` below --
+    # see TUNING_REFERENCE.md's "phasing-burst detection threshold"
+    # section for what changing it trades off.
+    if grouper is None:
+        grouper = CharacterGrouper()
+    if fec is None:
+        fec = FecCombiner()
     prev_phase: Optional[int] = None
     consecutive_phasing = 0
     for bd in bit_decisions:
@@ -731,7 +769,7 @@ def decode_bit_stream(bit_decisions: Iterator[BitDecision]) -> Iterator[str]:
             if code in _PHASING_CODES:
                 consecutive_phasing += 1
             else:
-                if consecutive_phasing >= 4:
+                if consecutive_phasing >= phasing_burst_threshold:
                     # Just emerged from a run of phasing signal (which FEC
                     # structurally cannot lock during -- see FecCombiner
                     # docstring) into real content. Reset UNCONDITIONALLY

@@ -113,6 +113,10 @@ ipython_config.py
 # pdm
 #   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
 #pdm.lock
+# Personal NAVTEX decoder config (device indices, local file paths) --
+# keep navtex.toml.example checked in as the template, not this.
+navtex.toml
+
 #   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
 #   in version control.
 #   https://pdm.fming.dev/latest/usage/project/#working-with-version-control
