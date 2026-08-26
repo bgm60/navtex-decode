@@ -263,7 +263,7 @@ class CharacterGrouper:
     # the score is re-evaluated continuously on every incoming bit. n=30
     # gives >3 standard deviations of separation, making a spurious
     # crossing rare rather than close to inevitable.
-    MIN_GROUPS_FOR_ACQUIRE = 30
+    MIN_GROUPS_FOR_ACQUIRE = 25
 
     def __init__(self, sync_window: int = 250):
         self.sync = CharacterSync(sync_window)

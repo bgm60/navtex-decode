@@ -339,6 +339,8 @@ stale) parity lock longer before being forced to re-earn it.
   bits of margin. If you lower `sync_window` without also lowering
   `MIN_GROUPS_FOR_ACQUIRE`, acquisition could stall entirely (never
   enough groups in the window to satisfy the minimum).
+  Trying 25 to see if faster acquisition produces a noticeable improvement
+  in the real world.
 - **`RATE_WINDOW` and `lock_window`, together with `LAG`, size
   `FecCombiner`'s history buffer** (`history_len = LAG + max(lock_window,
   RATE_WINDOW)`). Changing one without the other can shrink the
@@ -410,3 +412,4 @@ stale) parity lock longer before being forced to re-earn it.
    meaningful ground against SeaTTY, since they're higher-risk (touch
    statistical safety margins directly) for less clearly-targeted
    benefit given your specific complaint.
+
