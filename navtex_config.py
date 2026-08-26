@@ -46,7 +46,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Optional, get_type_hints
+from typing import Any, Optional, Union, get_type_hints
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -84,7 +84,7 @@ class Profile:
     # --- Input source (replaces the old --live/--device/--log-dir/wav_file CLI flags) ---
     mode: str = "file"              # "file" or "live"
     wav_file: Optional[str] = None  # required if mode == "file"
-    device: Optional[str] = None    # index or name-substring; only used if mode == "live"
+    device: Optional[Union[int, str]] = None  # index or name-substring; only used if mode == "live"
     log_dir: Optional[str] = None   # omit to disable logging
 
     # --- Step 1: sampling/windowing (NavtexConfig) ---
@@ -172,25 +172,49 @@ class Profile:
 
 
 def _coerce(field_name: str, field_type: type, raw: Any) -> Any:
-    """Light type-checking for one TOML value against its Profile field's
-    declared type. TOML itself already distinguishes strings/ints/floats/
-    bools, so this mostly catches the case of a profile using an int
-    where a float field is documented (e.g. `loop_gain = 0` -- valid TOML,
-    wrong intent) and int/float mismatches; Optional[...] fields accept
-    None seamlessly since a missing key never reaches this function at
-    all (see load_profile).
+    """Type-checks/coerces one TOML value against its Profile field's
+    declared type, which may itself be a Union of several accepted types
+    (e.g. `device: Optional[Union[int, str]]`, since a device is validly
+    either an index or a name substring).
+
+    Accepts `raw` if it matches ANY member of the field's type (aside
+    from NoneType, which never reaches here -- see load_profile). A bare
+    int is also widened to float for a float-typed field member, since
+    TOML's own int/float distinction is stricter than this schema needs
+    (e.g. `loop_gain = 0` is valid TOML and a reasonable thing to write,
+    even though 0 is an int literal).
+
+    bool is explicitly excluded from matching a plain `int` member --
+    Python's bool is a subclass of int, so `isinstance(True, int)` is
+    True, which would otherwise silently accept `enable_x = true` for an
+    int-typed field or a stray `1`/`0` for a bool-typed field as if it
+    were the other type.
     """
-    if field_type is float and isinstance(raw, int) and not isinstance(raw, bool):
-        return float(raw)
-    if field_type is Optional[str] and isinstance(raw, str):
-        return raw
-    if field_type is int and isinstance(raw, bool):
-        raise ConfigError(f"{field_name}: expected int, got bool")
-    if field_type in (int, float, str, bool) and not isinstance(raw, field_type):
-        raise ConfigError(
-            f"{field_name}: expected {field_type.__name__}, got {type(raw).__name__} ({raw!r})"
-        )
-    return raw
+    members = getattr(field_type, "__args__", (field_type,))
+    members = tuple(m for m in members if m is not type(None))
+
+    for member in members:
+        if member is bool:
+            if isinstance(raw, bool):
+                return raw
+            continue
+        if member is int:
+            if isinstance(raw, int) and not isinstance(raw, bool):
+                return raw
+            continue
+        if member is float:
+            if isinstance(raw, bool):
+                continue
+            if isinstance(raw, (int, float)):
+                return float(raw)
+            continue
+        if member is str:
+            if isinstance(raw, str):
+                return raw
+            continue
+
+    expected = " or ".join(m.__name__ for m in members)
+    raise ConfigError(f"{field_name}: expected {expected}, got {type(raw).__name__} ({raw!r})")
 
 
 def load_profile(config_path: str, profile_name: str) -> Profile:
@@ -240,11 +264,7 @@ def load_profile(config_path: str, profile_name: str) -> Profile:
                 f"Valid keys: {', '.join(sorted(known_fields))}"
             )
         field_type = known_fields[key]
-        # Optional[T] fields: unwrap to T for the coercion/type check,
-        # `None` is never present here since a key is either given (with
-        # a real value) or simply absent from the TOML table.
-        underlying = getattr(field_type, "__args__", (field_type,))[0]
-        kwargs[key] = _coerce(key, underlying, raw_value)
+        kwargs[key] = _coerce(key, field_type, raw_value)
 
     profile = Profile(**kwargs)
     profile.validate()
