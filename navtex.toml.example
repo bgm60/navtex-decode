@@ -1,0 +1,41 @@
+# NAVTEX Decoder — example profile config.
+#
+# Copy this to navtex.toml (the default --config path) and edit as
+# needed, or point --config at a file named anything you like.
+#
+# Every profile section is fully self-contained -- there is no shared
+# [defaults] section. Any key you omit from a profile falls back to the
+# code's built-in default (see navtex_config.py's Profile dataclass for
+# the full list and TUNING_REFERENCE.md for what each one does and why).
+#
+# Run with:
+#   python navtex_decode.py <profile_name> --config navtex.toml
+
+# --- Decoding a WAV file, at the values currently validated against
+# real weak/fading recordings (see TUNING_REFERENCE.md) ---
+[weak_signal_file]
+mode = "file"
+wav_file = "recording.wav"
+log_dir = "logs/"
+loop_gain = 0.05
+char_drop_threshold = 0.46
+min_groups_for_acquire = 25
+
+# --- Live decoding from a specific audio device ---
+[live_default]
+mode = "live"
+device = 4                 # index or a name substring; omit for the system default device
+log_dir = "D:/Radio/Logs/580kHz/"
+loop_gain = 0.05
+char_drop_threshold = 0.46
+min_groups_for_acquire = 25
+
+# --- A conservative/strict profile: slower acquisition, more resistant
+# to false-locking on noise. Useful for a strong, clean signal where
+# there's no need to trade safety margin for speed. ---
+[conservative]
+mode = "file"
+wav_file = "recording.wav"
+loop_gain = 0.19
+min_groups_for_acquire = 30
+sync_window = 250
