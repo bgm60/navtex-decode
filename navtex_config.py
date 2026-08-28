@@ -82,7 +82,7 @@ class Profile:
     """
 
     # --- Input source (replaces the old --live/--device/--log-dir/wav_file CLI flags) ---
-    mode: str = "file"              # "file" or "live"
+    mode: str = "live"              # "file" or "live"
     wav_file: Optional[str] = None  # required if mode == "file"
     device: Optional[Union[int, str]] = None  # index or name-substring; only used if mode == "live"
     log_dir: Optional[str] = None   # omit to disable logging
@@ -94,7 +94,7 @@ class Profile:
     # than hand-editing these.
     sample_rate: int = 48000
     oversample: int = 8
-    window_type: str = "hamming"
+    window_type: str = "blackman"
     mark_freq: float = 1785.0
     space_freq: float = 1615.0
 
