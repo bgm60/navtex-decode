@@ -1,4 +1,10 @@
-External libraries:
-    numpy
-    scipy
+# Core pipeline (Steps 1-4)
+numpy
+scipy
 
+# navtex_confidence_plot.py
+matplotlib
+
+# navtex_live_decode.py --live (only needed for live mic input;
+# file-based decoding works without it)
+sounddevice
