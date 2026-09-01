@@ -54,6 +54,8 @@ from __future__ import annotations
 import argparse
 import datetime
 import sys
+import os
+import time
 from collections import deque
 from pathlib import Path
 from typing import Deque, Optional, TextIO
@@ -140,7 +142,6 @@ def tap_bit_decisions(bit_decisions, tracker: SignalStrengthTracker):
         tracker.update(bd.confidence)
         yield bd
 
-
 class TimestampedLineWriter:
     """Wraps a text file so each line gets a UTC timestamp prefix, added
     right as that line starts.
@@ -203,13 +204,26 @@ class TimestampedLineWriter:
     continue completely normally.
     """
 
-    def __init__(self, path: Path, f: TextIO, tracker: SignalStrengthTracker):
+    def __init__(self, path: Path, f: TextIO, tracker: SignalStrengthTracker, fsync_interval: float = 3600.0):
         self._path = path
         self._f = f
         self._tracker = tracker
         self._need_prefix = True   # next char written -- content or a new boundary -- needs a fresh prefix first
         self._pending_cr = False   # just wrote '\r'; still waiting to see if '\n' follows to decide if it's a pair
         self._disabled = False
+        self._fsync_interval = fsync_interval
+        self._last_fsync = time.monotonic()
+		
+    def _maybe_fsync(self) -> None:
+        if self._disabled:
+            return
+        now = time.monotonic()
+        if now - self._last_fsync >= self._fsync_interval:
+            try:
+                os.fsync(self._f.fileno())
+                self._last_fsync = now
+            except OSError as e:
+                self._recover_from_error("fsync", e)
 
     def write(self, s: str) -> None:
         if self._disabled:
@@ -239,9 +253,11 @@ class TimestampedLineWriter:
                 if ch == "\r":
                     self._pending_cr = True
                     self._f.flush()
+                    self._maybe_fsync()
                 elif ch == "\n":
                     self._need_prefix = True
                     self._f.flush()
+                    self._maybe_fsync()
         except OSError as e:
             self._recover_from_error("write", e)
 
@@ -277,6 +293,12 @@ class TimestampedLineWriter:
             # cosmetic edge case next to actually losing the session.
             self._need_prefix = True
             self._pending_cr = False
+			# Same idea for the fsync timer: a fresh handle has had nothing
+			# synced yet, so don't let it inherit a stale _last_fsync that
+			# might make the very next line trigger an immediate fsync (or,
+			# worse, look like it's "due" for one against a handle that just
+			# started).
+            self._last_fsync = time.monotonic()
             print("[log warning] log file reopened successfully, continuing.", file=sys.stderr)
         except OSError as reopen_error:
             print(f"[log warning] could not reopen log file ({reopen_error}); "
