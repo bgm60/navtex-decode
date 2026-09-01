@@ -49,6 +49,8 @@ blank line before every real line.
 
 from __future__ import annotations
 
+# import external modules and packages.
+
 import argparse
 import datetime
 import sys
@@ -69,6 +71,7 @@ from navtex_soft_fec_combine import SoftBitSync as BitSync
 from navtex_soft_fec_combine import SoftCharacterGrouper, SoftFecCombiner
 from navtex_soft_fec_combine import decode_bit_stream_soft as decode_bit_stream
 
+# List all available audio devices (both input and output).
 
 def list_devices() -> None:
     try:
@@ -79,6 +82,9 @@ def list_devices() -> None:
         return
     print(sd.query_devices())
 
+# Used as a  "signal strength" metric for logging.
+# It is actually a bit of a misnomer: it is not a raw power reading, but rather a rolling calculation of bit confidence.
+# This means it sufferd from the 'cliff edge' effect of the Step 3 integration window.
 
 class SignalStrengthTracker:
     """Maintains a rolling average of Step 3's per-bit confidence
@@ -302,6 +308,8 @@ def make_log_file(log_dir: str, source_description: str,
     print(f"Logging decoded text to: {path}")
     return TimestampedLineWriter(path, f, tracker)
 
+# This is the main entry point for the decoding pipeline.
+# It sets up the processing chain and handles logging and output.
 
 def run(source: AudioSource, profile: Profile, source_description: str) -> None:
     # Same reasoning as make_log_file's newline="" -- decoded text already
@@ -314,11 +322,14 @@ def run(source: AudioSource, profile: Profile, source_description: str) -> None:
     # redirected through something that replaces it) not support
     # reconfigure, so this degrades gracefully rather than crashing --
     # console output would just fall back to Windows' default translation
+
     # in that case, exactly as before this change.
     try:
         sys.stdout.reconfigure(newline="")
     except (AttributeError, ValueError):
         pass
+    
+    # Costruct a NavtexConfig object from the profile settings.
 
     config = NavtexConfig(
         sample_rate=profile.sample_rate,
@@ -327,7 +338,11 @@ def run(source: AudioSource, profile: Profile, source_description: str) -> None:
         mark_freq=profile.mark_freq,
         space_freq=profile.space_freq,
     )
+
+    # Initislize the selected windowing profile to protect against spectral leakage and improve tone detection.
+
     windower = Windower(config)
+
     detector = ToneDetector(config)
     bitsync = BitSync(config, loop_gain=profile.loop_gain)
 
@@ -375,6 +390,9 @@ def run(source: AudioSource, profile: Profile, source_description: str) -> None:
 
 
 def main() -> None:
+
+    # Set-up argparse to parse command-line arguments.
+
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("profile", nargs="?",
                          help="Name of the [profile] section to load from the config file")
@@ -385,10 +403,13 @@ def main() -> None:
                               "(standalone diagnostic action -- ignores --config/profile)")
     args = parser.parse_args()
 
-    # Standalone diagnostic: terminates immediately, no profile needed.
+    # Print the list of available audio input devices and exit if requested.
+
     if args.list_devices:
         list_devices()
         return
+    
+    # Load the specified profile from the config file, or error if not provided.
 
     if not args.profile:
         parser.error("Provide a profile name (or use --list-devices)")
@@ -400,6 +421,8 @@ def main() -> None:
         parser.error(str(e))
         return
 
+    # Build a configuratuion objectfrom the profile settings and command line arguments.
+
     config = NavtexConfig(
         sample_rate=profile.sample_rate,
         oversample=profile.oversample,
@@ -407,6 +430,8 @@ def main() -> None:
         mark_freq=profile.mark_freq,
         space_freq=profile.space_freq,
     )
+
+    # Select the audio source based on the profile's mode (live or file).
 
     if profile.mode == "live":
         device = profile.device
@@ -423,8 +448,10 @@ def main() -> None:
         description = f"WAV file {profile.wav_file!r}"
         print(f"Decoding file: {profile.wav_file}")
 
-    run(source, profile, description)
+    # Run the decoding pipeline with the selected source and profile.
+    # Returns when the source is exhausted (file) or interrupted by Ctrl+C (live).
 
+    run(source, profile, description)
 
 if __name__ == "__main__":
     main()
