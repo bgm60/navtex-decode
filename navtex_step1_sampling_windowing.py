@@ -57,7 +57,6 @@ import sys
 import time
 from dataclasses import dataclass
 from typing import Iterator, Optional
-from bgm_normalize import bgm_normalize   # BGM: Added audio normalization
 
 import numpy as np
 from scipy.signal import get_window as _sp_get_window
@@ -338,8 +337,7 @@ class Windower:
 
         while len(self._buffer) >= window_size:
             raw = self._buffer[:window_size].copy()
-            new_raw = bgm_normalize(raw)
-            windowed = new_raw * self._window_fn
+            windowed = raw * self._window_fn
             yield Frame(
                 raw=raw,
                 windowed=windowed,
