@@ -1,4 +1,4 @@
-$logDir = "D:\Radio\newlogs"
+$logDir = "D:\Radio\Logs\518kHz"
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
 
 & python navtex_decode.py 518kHz 2>&1 | ForEach-Object {
