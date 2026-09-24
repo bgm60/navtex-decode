@@ -94,7 +94,7 @@ class Profile:
     # than hand-editing these.
     sample_rate: int = 48000
     oversample: int = 8
-    window_type: str = "blackman"
+    window_type: str = "hamming"
     mark_freq: float = 1785.0
     space_freq: float = 1615.0
 

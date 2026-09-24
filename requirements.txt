@@ -5,3 +5,4 @@ scipy
 # navtex_live_decode.py --live (only needed for live mic input;
 # file-based decoding works without it)
 sounddevice
+soundfile
