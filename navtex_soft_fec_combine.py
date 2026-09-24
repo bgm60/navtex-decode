@@ -14,9 +14,7 @@ individual errors land at different bit positions.
 
 Deliberately kept as a separate module rather than editing
 navtex_step3_bit_sync.py / navtex_step4_character_decode.py in place, so
-the existing, already-validated decode path is completely unaffected --
-this can be A/B tested against it directly (see
-validate_soft_combining.py) before any decision to adopt it for real.
+the existing, already-validated decode path is completely unaffected.
 
 What "soft value" means here
 ------------------------------

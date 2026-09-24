@@ -9,11 +9,7 @@ the old collection of individual CLI flags.
 Each profile is fully self-contained -- there is deliberately no
 `[defaults]` section that others inherit from. Profiles are meant to
 represent distinct real-world setups (different receivers, different
-signal conditions, different logging destinations), and implicit
-inheritance across them is exactly the kind of hidden state this project
-has already been burned by once (see TUNING_REFERENCE.md / project
-history) -- better for each profile to say plainly what it uses, even at
-the cost of some repetition between profiles.
+signal conditions, different logging destinations).
 
 Example TOML file
 -------------------
@@ -37,8 +33,7 @@ Run with:  python navtex_decode.py weak_dx_live --config myconfig.toml
 
 Only keys you actually want to override from the code's built-in
 defaults need to be present -- see Profile's field defaults below, which
-mirror the values documented in TUNING_REFERENCE.md at the time this
-module was written.
+mirror the values documented in DOCUMENTATION.md
 """
 
 from __future__ import annotations
@@ -89,9 +84,7 @@ class Profile:
 
     # --- Step 1: sampling/windowing (NavtexConfig) ---
     # Calibration values -- specific to a given receiver/SDR setup, not
-    # casual tuning knobs. Re-derive with calibrate_tone_frequencies.py
-    # against a fresh recording if you change receiver hardware, rather
-    # than hand-editing these.
+    # casual tuning knobs.
     sample_rate: int = 48000
     oversample: int = 8
     window_type: str = "hamming"

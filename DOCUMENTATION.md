@@ -444,7 +444,7 @@ knobs, and they must match the receiver setup for decoding to work.
 | `mark_freq` | `1785.0` | Audio frequency in Hz of the mark (binary 1) tone. |
 | `space_freq` | `1615.0` | Audio frequency in Hz of the space (binary 0) tone. |
 | `oversample` | `8` | Number of analysis frames per bit (see section 3.2). |
-| `window_type` | `"blackman"` | Window function applied to each frame. Any name accepted by `scipy.signal.get_window` can be used, such as `"hamming"`, `"hann"` or `"blackman"`. |
+| `window_type` | `"hamming"` | Window function applied to each frame. Any name accepted by `scipy.signal.get_window` can be used, such as `"hamming"`, `"hann"` or `"blackman"`. |
 
 **Mark and space frequencies.** The audio frequencies of the NAVTEX tones
 depend on the receiver's tuning and demodulator settings, not on the

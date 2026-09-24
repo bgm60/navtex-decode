@@ -1,106 +1,147 @@
 # NAVTEX Decoder
 
-A from-scratch NAVTEX (100-baud FSK, CCIR 476 / SITOR-B) decoder, built as a
-four-stage pipeline that turns raw audio (live mic input or a WAV file)
-into decoded text.
+A from-scratch software decoder for NAVTEX, the maritime safety broadcast
+service. It takes demodulated audio from a receiver, either live from a
+sound-card input or from a WAV recording, and turns the 100-baud FSK signal
+(CCIR 476 / SITOR-B) into decoded text on the console, with optional
+timestamped logging to a file.
 
-## Pipeline
+The decoder uses soft-decision combining of each character's two FEC
+transmissions, self-aligning bit and character synchronisation, and
+automatic recovery after fades and inter-message phasing, so it keeps
+producing usable text on weak and fading signals.
 
-```
-[1] Sampling & windowing        navtex_step1_sampling_windowing.py
-[2] Mark/space tone detection   navtex_step2_tone_detection.py
-[3] Bit-clock recovery          navtex_step3_bit_sync.py
-[4] Character decode + FEC      navtex_step4_character_decode.py
-```
+## How it works
 
-1. **Sampling & windowing** — captures audio and turns the continuous
-   sample stream into overlapping analysis frames (one window per symbol,
-   hopped forward 8x per bit by default).
-2. **Tone detection** — measures mark/space tone energy per frame via a
-   vectorized Goertzel-equivalent DFT correlation.
-3. **Bit-clock recovery** — a proportional (Type-I) digital PLL locks onto
-   symbol timing and produces one bit decision per transmitted symbol,
-   with a per-bit confidence score.
-4. **Character decode** — recovers 7-bit CCIR 476 codeword sync
-   (constant-weight-4 property), combines each character's two FEC
-   transmissions (time diversity), and maps codewords to text via the
-   ITU-R M.476-5 table with LTRS/FIGS shift tracking.
+The decoder is a streaming pipeline of four stages. Each stage pulls data
+from the one before it, so live audio is decoded continuously with only a
+short delay.
 
-## Tools
+| Stage | Module | What it does |
+|---|---|---|
+| 1. Sampling and windowing | `navtex_step1_sampling_windowing.py` | Reads audio from a live device or WAV file and cuts it into overlapping, windowed frames, one bit period long, eight per bit. |
+| 2. Tone detection | `navtex_step2_tone_detection.py` | Measures mark and space tone energy in each frame (Goertzel-equivalent) and produces a gain-independent mark/space difference. |
+| 3. Bit-clock recovery | `navtex_step3_bit_sync.py`, `navtex_soft_fec_combine.py` | A digital phase-locked loop aligns to the transmitter's bit timing and emits one decision per bit, with a signed soft value and a confidence score. |
+| 4. Character decode | `navtex_step4_character_decode.py`, `navtex_soft_fec_combine.py` | Finds 7-bit character alignment from the CCIR 476 weight-4 property, locks onto the DX/RX interleave, soft-combines the two copies of each character, and translates codewords to text. |
 
-| Script | Purpose |
+`navtex_step4_character_decode.py` holds the CCIR 476 tables and the core
+synchronisation and FEC logic. `navtex_soft_fec_combine.py` extends stages
+3 and 4 to carry soft values through the pipeline and holds the top-level
+decode loop that the application runs.
+
+See [`DOCUMENTATION.md`](DOCUMENTATION.md) for a full description of each
+stage and of every configuration parameter.
+
+## Project files
+
+| File | Purpose |
 |---|---|
-| `navtex_live_decode.py` | Run the full pipeline against a live audio device or a WAV file; stream decoded text to the console, optionally logging to a timestamped file. |
-| `calibrate_tone_frequencies.py` | Determine the correct mark/space frequencies for your specific receiver by searching for whichever pair makes the weight-4 codeword property show up reliably in a real recording. |
-| `navtex_confidence_plot.py` | Plot per-bit confidence and signal power over time for one or more recordings, for comparing/diagnosing reception quality. |
-| `test_step4_roundtrip.py` | Round-trip test: encodes known text with a reference SITOR-B FEC encoder and verifies Step 4 decodes it back correctly. |
+| `navtex_decode.py` | Application entry point: loads a profile, runs the pipeline, writes console output and log files. |
+| `navtex_config.py` | Loads and validates TOML configuration profiles. |
+| `navtex_step1_sampling_windowing.py` | Audio sources and the frame windower. |
+| `navtex_step2_tone_detection.py` | Mark/space tone detector. |
+| `navtex_step3_bit_sync.py` | Bit-decision type and bit-clock loop state. |
+| `navtex_step4_character_decode.py` | CCIR 476 tables, character sync, FEC parity locking and character lookup. |
+| `navtex_soft_fec_combine.py` | Soft-value bit sync, character grouping and FEC combining, and the decode loop. |
+| `navtex.toml.example` | Example configuration file. |
+| `DOCUMENTATION.md` | Detailed application and configuration documentation. |
+| `requirements.txt` | Python package dependencies. |
+
+## Requirements
+
+- Python 3.11 or later (profiles are read with the standard-library
+  `tomllib`).
+- `numpy` and `scipy`.
+- `sounddevice` for live audio input.
+- `soundfile` for WAV file input.
 
 ## Setup
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # .venv\Scripts\activate on Windows
+source .venv/bin/activate      # .venv\Scripts\activate on Windows
 pip install -r requirements.txt
 ```
 
-`sounddevice` is only needed for `--live` mic input; decoding a WAV file
-works without it.
+## Configuration
+
+All settings, including the audio source, logging directory and decoder
+tuning parameters, are held in named profiles in a TOML file. Copy the
+example to create your own:
+
+```bash
+cp navtex.toml.example navtex.toml
+```
+
+Each `[section]` is a self-contained profile. Any key left out uses the
+built-in default. For example:
+
+```toml
+[live_518]
+mode = "live"
+device = 4                  # index or part of the device name
+log_dir = "logs/518kHz/"
+
+[recording]
+mode = "file"
+wav_file = "recordings/example.wav"
+```
+
+Profiles are validated strictly when loaded: unknown keys, wrong value
+types and inconsistent parameter combinations are reported as errors
+rather than silently ignored. `navtex.toml` is excluded from version
+control, since it usually contains machine-specific device numbers and
+paths.
 
 ## Usage
 
 ```bash
-# List available audio input devices
-python navtex_live_decode.py --list-devices
+# List the available audio input devices
+python navtex_decode.py --list-devices
 
-# Decode live from the default input device
-python navtex_live_decode.py --live
+# Run a profile from navtex.toml in the current directory
+python navtex_decode.py live_518
 
-# Decode live from a specific device, with logging
-python navtex_live_decode.py --live --device 2 --log-dir logs/
-
-# Decode a WAV file, with logging
-python navtex_live_decode.py recording.wav --log-dir logs/
-
-# Don't know your receiver's tone frequencies? Calibrate first:
-python calibrate_tone_frequencies.py recording.wav [--start SEC] [--duration SEC]
-
-# Inspect signal quality across one or more recordings:
-python navtex_confidence_plot.py recording1.wav [recording2.wav ...] [-o OUTDIR]
+# Run a profile from another config file
+python navtex_decode.py recording --config /path/to/other.toml
 ```
 
-## Testing
+Live decoding runs until stopped with Ctrl+C. File decoding stops at the
+end of the recording.
 
-```bash
-python test_step4_roundtrip.py
+## Output
+
+Decoded text is streamed to the console as it arrives. In the text, `~`
+marks a character that could not be decoded, and `!` marks a character
+whose two transmitted copies were each valid but disagreed.
+
+If `log_dir` is set, the text is also written to
+`navtex_<YYYYMMDD_HHMMSS>Z.txt` in that directory, named after the UTC
+start time. Each line is prefixed with its UTC time and a relative signal
+strength reading from 00 to 99:
+
+```
+[20260924 13:50:49 85] ZCZC SA02
 ```
 
-## Docs
+## Receiver setup
 
-- [`TUNING_REFERENCE.md`](TUNING_REFERENCE.md) — notes on tuning/calibrating
-  the pipeline's parameters against real recordings.
+The audio frequencies of the mark and space tones depend on the receiver's
+tuning and demodulator settings, not on the NAVTEX standard, and so does
+which tone is the higher one. The defaults (`mark_freq = 1785`,
+`space_freq = 1615`) suit a receiver producing tones centred on 1700 Hz
+with mark as the higher tone. If the tones are wrong or swapped, the
+decoder runs but produces nothing useful, so set `mark_freq` and
+`space_freq` in your profile to match your receiver.
 
-## Credits / provenance
+## Credits and provenance
 
-- The CCIR 476 codeword table and mark/space conventions were transcribed
-  from **ITU-R Recommendation M.476-5**, Annex 1 (the primary standard).
-  The document itself isn't redistributed in this repo (ITU copyright); see
-  the official recommendation at
+- The CCIR 476 codeword tables were transcribed from **ITU-R
+  Recommendation M.476-5**, Annex 1. The document is not redistributed
+  here (ITU copyright); see
   <https://www.itu.int/rec/R-REC-M.476-5-199510-I>.
-- The SITOR-B FEC interleave structure and DX/RX comparison lag used in
-  `navtex_step4_character_decode.py`'s `FecCombiner` were verified by hand
-  against **Baltic Lab's** open-source, field-tested Arduino CCIR476
-  library (confirmed working against a commercial NAV4 NAVTEX receiver).
-  No code was copied from that project — the transmit behavior was traced
-  and independently reimplemented — but credit where it's due:
+- The SITOR-B FEC interleave structure and DX/RX comparison lag were
+  verified by hand against **Baltic Lab's** open-source, field-tested
+  Arduino CCIR476 library. No code was copied; the transmit behaviour was
+  traced and independently reimplemented:
   <https://baltic-lab.com/2022/07/sitor-b-navtex-test-signal-generation/>.
-
-## Notes
-
-- Standard mark/space tone assumptions (e.g. "1615/1785 Hz, mark low")
-  don't always hold — real receiver hardware varies, and a wrong guess
-  fails silently (the decoder runs, but output is garbage). Use
-  `calibrate_tone_frequencies.py` against a real recording before trusting
-  decoded output from a new setup.
-- Log files from `navtex_live_decode.py` are UTC-timestamped
-  (`navtex_<UTC timestamp>.txt`) and excluded from version control via
-  `.gitignore`, along with `.wav` recordings and generated `.png` plots.
