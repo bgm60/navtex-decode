@@ -51,20 +51,12 @@ useful later for detecting silence between transmissions or squelch.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Iterator
 
 import numpy as np
 
-from navtex_step1_sampling_windowing import (
-    AudioSource,
-    Frame,
-    FileSource,
-    NavtexConfig,
-    SyntheticNavtexSource,
-    Windower,
-)
+from navtex_step1_sampling_windowing import Frame, NavtexConfig
 
 
 # ---------------------------------------------------------------------------
@@ -75,12 +67,7 @@ from navtex_step1_sampling_windowing import (
 class ToneSample:
     """Per-frame mark/space energy measurement, handed to Step 3."""
 
-    timestamp: float       # seconds, same as the source Frame
-    start_sample: int      # sample index of the frame start
-    mark_power: float       # energy at mark_freq
-    space_power: float      # energy at space_freq
     diff: float             # (mark - space) / (mark + space), in [-1, +1]
-    total_power: float      # mark + space -- rough signal-present measure
     bit: bool                # hard decision: True = mark (1), False = space (0)
 
 
@@ -118,83 +105,10 @@ class ToneDetector:
         total = mark_power + space_power
         diff = (mark_power - space_power) / total if total > 1e-12 else 0.0
         return ToneSample(
-            timestamp=frame.timestamp,
-            start_sample=frame.start_sample,
-            mark_power=mark_power,
-            space_power=space_power,
             diff=diff,
-            total_power=total,
             bit=mark_power >= space_power,
         )
 
     def process_stream(self, frames: Iterator[Frame]) -> Iterator[ToneSample]:
         for frame in frames:
             yield self.process(frame)
-
-
-# ---------------------------------------------------------------------------
-# Demo / smoke test
-# ---------------------------------------------------------------------------
-
-def _demo():
-    """Feeds a synthetic (or WAV-file) signal through Step 1 + Step 2.
-
-    Against the synthetic source, this also scores hard-decision accuracy
-    against the known transmitted bits, checked only at frames that land
-    exactly on a symbol boundary (every `oversample`-th frame) — i.e. this
-    isolates tone-detection correctness from symbol-timing, since Step 3
-    hasn't been built yet.
-    """
-    config = NavtexConfig()
-    print("Config:", config.describe())
-
-    if len(sys.argv) > 1:
-        source: AudioSource = FileSource(config, sys.argv[1])
-        print(f"Source: WAV file {sys.argv[1]!r}")
-    else:
-        source = SyntheticNavtexSource(config, duration_s=2.0)
-        print("Source: synthetic mark/space test tone (no file given)")
-
-    windower = Windower(config)
-    detector = ToneDetector(config)
-    samples_per_symbol = config.samples_per_symbol
-
-    correct = 0
-    checked = 0
-    total_ones = 0
-    total_frames = 0
-    print_every_n_symbols = 20  # spread printout across the whole stream,
-                                # not just the first symbol (which is only
-                                # `oversample` frames long and therefore a
-                                # single bit repeated)
-
-    for sample in detector.process_stream(windower.frames(source)):
-        total_frames += 1
-        total_ones += int(sample.bit)
-
-        is_symbol_start = sample.start_sample % samples_per_symbol == 0
-        symbol_index = sample.start_sample // samples_per_symbol
-        if is_symbol_start and symbol_index % print_every_n_symbols == 0:
-            print(f"t={sample.timestamp:7.3f}s  mark={sample.mark_power:10.2f}  "
-                  f"space={sample.space_power:10.2f}  diff={sample.diff:+.3f}  "
-                  f"bit={int(sample.bit)}")
-
-        if isinstance(source, SyntheticNavtexSource) and hasattr(source, "bits"):
-            if sample.start_sample % samples_per_symbol == 0:
-                symbol_index = sample.start_sample // samples_per_symbol
-                if symbol_index < len(source.bits):
-                    checked += 1
-                    if bool(sample.bit) == bool(source.bits[symbol_index]):
-                        correct += 1
-
-    if total_frames:
-        print(f"\nOverall (all oversampled frames): {total_ones}/{total_frames} "
-              f"decided mark/1 ({100 * total_ones / total_frames:.1f}%)")
-
-    if checked:
-        print(f"Symbol-aligned decode accuracy: {correct}/{checked} "
-              f"({100 * correct / checked:.1f}%)")
-
-
-if __name__ == "__main__":
-    _demo()

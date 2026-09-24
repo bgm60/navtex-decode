@@ -71,8 +71,6 @@ from __future__ import annotations
 from collections import deque
 from typing import Deque, Iterator, List, Optional
 
-from navtex_step3_bit_sync import BitDecision
-
 # ---------------------------------------------------------------------------
 # CCIR 476 codeword table (see provenance note above)
 # ---------------------------------------------------------------------------
@@ -283,28 +281,7 @@ class CharacterGrouper:
                                         else min_groups_for_acquire)
         self.sync = CharacterSync(sync_window)
         self._group: List[bool] = []
-        self._group_confidence: List[float] = []
         self._active_phase: Optional[int] = None
-
-    def push_bit(self, bit: bool, confidence: float = 1.0) -> Iterator[tuple]:
-        self.sync.push_bit(bit)
-        current_global_pos = self.sync._total_bits - 1  # position of the bit just pushed
-
-        if self._active_phase is None:
-            self._try_acquire()
-            return
-
-        if not self._group and current_global_pos % 7 != self._active_phase:
-            return  # not yet at a phase-aligned starting bit; skip until we are
-
-        self._group.append(bit)
-        self._group_confidence.append(confidence)
-        if len(self._group) == 7:
-            code = ''.join('1' if b else '0' for b in self._group)
-            yield code, list(self._group_confidence)
-            self._group = []
-            self._group_confidence = []
-            self._reconsider()
 
     def _try_acquire(self) -> None:
         # Require the winning phase to clearly beat the runner-up, not
@@ -328,7 +305,6 @@ class CharacterGrouper:
         if best_score >= self.ACQUIRE_THRESHOLD and best_score >= runner_up_score + self.SWITCH_MARGIN:
             self._active_phase = best_phase
             self._group = []
-            self._group_confidence = []
 
     def _reconsider(self) -> None:
         active_score, active_n = self.sync.score_phase(self._active_phase)
@@ -491,12 +467,6 @@ class FecCombiner:
     # above that measured floor while cutting real-world acquisition time
     # roughly in half.
     MIN_SAMPLES_FOR_RATE = 5
-    # See the detailed note in _combine. Off by default: real-world
-    # testing showed this made output worse (far more '!', no clear
-    # benefit) despite thorough synthetic validation looking good --
-    # confidence per bit appears less reliable at pinpointing *which*
-    # specific bit within a codeword is wrong than testing assumed.
-    ENABLE_SINGLE_BIT_CORRECTION = False
 
     def __init__(self, lock_window: int = 15,
                  acquire_threshold: Optional[float] = None,
@@ -515,7 +485,6 @@ class FecCombiner:
         self._history: Deque[tuple] = deque(maxlen=history_len)  # (code, confidences) pairs
         self._n = 0
         self._parity: Optional[int] = None
-        self._lock_window = lock_window
         self._letters_mode = True
         # Rolling match/mismatch outcomes tracked for BOTH parities at all
         # times, not just whichever is currently active -- needed to
@@ -629,58 +598,8 @@ class FecCombiner:
         # to resync; stay put
 
     def _combine(self, dx: str, dx_conf: List[float], rx: str, rx_conf: List[float]) -> Iterator[str]:
-        if dx in _PHASING_CODES and rx in _PHASING_CODES:
-            # Phasing-signal filler observed mid-stream (not just at the
-            # opening preamble) -- confirmed empirically against a real
-            # recording: identical Phase1/Phase2 codewords, in the same
-            # simple non-doubled alternation, reappearing periodically
-            # mid-message. No ITU-R M.476-5 text was found describing
-            # this explicitly -- treat that as an open question about
-            # *why* it happens, not evidence it doesn't: the codewords
-            # themselves are unambiguous and reproducible across every
-            # occurrence checked. dx will structurally never equal rx
-            # here regardless (period-2 content defeats the lag-5
-            # comparison the same way the opening preamble does), so
-            # this isn't a decode failure -- skip cleanly, matching how
-            # BLANK idle characters are already handled, rather than
-            # flagging it as an error.
-            return
-
         dx_valid = _weight(dx) == 4
         rx_valid = _weight(rx) == 4
-
-        # Confidence-guided single-bit correction: whichever side(s)
-        # failed the weight-4 check outright get one attempt at recovery
-        # before falling back to the existing valid/invalid logic below.
-        # See _try_single_bit_correction for why this needs per-bit
-        # confidence rather than codeword distance alone.
-        #
-        # DEFAULT DISABLED (see ENABLE_SINGLE_BIT_CORRECTION below): tested
-        # thoroughly against synthetic data with confidence constructed to
-        # correlate cleanly with actual bit correctness, and it worked --
-        # roughly a 3x reduction in error symbols, near-zero silent wrong
-        # corrections. But against real live signal it produced far MORE
-        # '!' output with no obvious benefit -- almost certainly because
-        # real per-bit confidence is confounded by a structural, content-
-        # dependent effect (a bit's confidence is heavily influenced by
-        # whether its analysis window straddles a neighboring transition,
-        # not primarily by whether noise corrupted that specific bit),
-        # which the synthetic test's directly-constructed confidence
-        # didn't and couldn't capture. Left in place and toggleable for
-        # further investigation, but off by default until validated
-        # against real recorded confidence/error data rather than a
-        # synthetic model that turned out to be unrealistic.
-        if self.ENABLE_SINGLE_BIT_CORRECTION:
-            if not dx_valid:
-                corrected = _try_single_bit_correction(dx, dx_conf, _ALL_VALID_CODES)
-                if corrected is not None:
-                    dx = corrected
-                    dx_valid = True
-            if not rx_valid:
-                corrected = _try_single_bit_correction(rx, rx_conf, _ALL_VALID_CODES)
-                if corrected is not None:
-                    rx = corrected
-                    rx_valid = True
 
         if dx_valid and rx_valid:
             if dx == rx:
@@ -737,151 +656,3 @@ class FecCombiner:
         table = LETTERS if self._letters_mode else FIGURES
         ch = table.get(code)
         yield ch if ch is not None else '~'  # weight-4 but an unassigned figure slot
-
-
-# ---------------------------------------------------------------------------
-# Top-level pipeline
-# ---------------------------------------------------------------------------
-
-def decode_bit_stream(bit_decisions: Iterator[BitDecision],
-                       grouper: Optional["CharacterGrouper"] = None,
-                       fec: Optional["FecCombiner"] = None,
-                       phasing_burst_threshold: int = 4) -> Iterator[str]:
-    # grouper/fec accepted as optional pre-built instances so callers
-    # (e.g. the TOML-driven CLI) can configure every tunable via their
-    # constructors rather than this function only ever using defaults.
-    # phasing_burst_threshold replaces the old bare literal `4` below --
-    # see TUNING_REFERENCE.md's "phasing-burst detection threshold"
-    # section for what changing it trades off.
-    if grouper is None:
-        grouper = CharacterGrouper()
-    if fec is None:
-        fec = FecCombiner()
-    prev_phase: Optional[int] = None
-    consecutive_phasing = 0
-    for bd in bit_decisions:
-        for code, confidences in grouper.push_bit(bd.bit, bd.confidence):
-            if grouper._active_phase != prev_phase:
-                fec.reset()  # phase changed since the last codeword; old FEC context is invalid
-                prev_phase = grouper._active_phase
-                consecutive_phasing = 0
-
-            if code in _PHASING_CODES:
-                consecutive_phasing += 1
-            else:
-                if consecutive_phasing >= phasing_burst_threshold:
-                    # Just emerged from a run of phasing signal (which FEC
-                    # structurally cannot lock during -- see FecCombiner
-                    # docstring) into real content. Reset UNCONDITIONALLY
-                    # here, even if FEC was already locked coming in.
-                    #
-                    # This used to be gated on `fec._parity is None` (skip
-                    # the reset if already locked), on the theory that a
-                    # phasing-like stretch between messages shouldn't be
-                    # allowed to throw away a good lock carried over from
-                    # an earlier message in the same recording. That
-                    # theory turned out to be wrong: confirmed directly
-                    # against a real recording ("Sync_failure.wav" -- see
-                    # TUNING_REFERENCE.md / project notes) where
-                    # CharacterGrouper's phase lock correctly survived a
-                    # genuine inter-message phasing burst untouched, but
-                    # the TRUE DX/RX parity flipped across that same
-                    # burst. Phasing content is period-2 and structurally
-                    # can't carry parity information either way (see
-                    # FecCombiner docstring), so there is no way to track,
-                    # during the burst, whether the real transmitted
-                    # idle/phasing codeword count between messages was
-                    # parity-preserving. With the old gate, the stale
-                    # parity from the previous message was kept, and every
-                    # DX/RX comparison afterward compared two unrelated
-                    # but individually-valid codewords -- exactly the '!'
-                    # signature -- for as long as it took FecCombiner's
-                    # own passive rolling-match-rate tracking to notice
-                    # and switch (about 20 characters / 3s in the observed
-                    # case), eating the opening ZCZC and station ID of the
-                    # next message.
-                    #
-                    # Resetting unconditionally instead forces a fresh,
-                    # statistically-gated re-acquisition (_try_acquire)
-                    # after every sufficiently long phasing burst, whether
-                    # previously locked or not. Because _try_acquire
-                    # replays buffered history once it re-locks, this
-                    # costs nothing extra in the common case where the
-                    # parity didn't actually change (it re-locks to the
-                    # same parity within a few samples and replays
-                    # normally) -- it only matters, positively, in the
-                    # case that used to corrupt the message opening.
-                    fec.reset()
-                consecutive_phasing = 0
-
-            yield from fec.push(code, confidences)
-
-
-# ---------------------------------------------------------------------------
-# Demo / WAV file entry point
-# ---------------------------------------------------------------------------
-
-def _demo():
-    """Runs the full Step 1-4 pipeline against a WAV file (or, with no
-    argument, a synthetic test message) and prints the decoded text.
-    """
-    import sys
-    from navtex_step1_sampling_windowing import (
-        AudioSource, FileSource, NavtexConfig, Windower,
-    )
-    from navtex_step2_tone_detection import ToneDetector
-    from navtex_step3_bit_sync import BitSync
-
-    config = NavtexConfig()
-    print("Config:", config.describe())
-
-    if len(sys.argv) > 1:
-        source: AudioSource = FileSource(config, sys.argv[1])
-        print(f"Source: WAV file {sys.argv[1]!r}\n")
-    else:
-        # No file given: fall back to a synthetic encoded test message so
-        # this is runnable standalone. Uses the same encoder as
-        # test_step4_roundtrip.py.
-        import numpy as np
-        from navtex_step1_sampling_windowing import SyntheticNavtexSource
-        from test_step4_roundtrip import encode_text
-
-        text = ("ZCZC SA88 THIS IS A SYNTHETIC TEST MESSAGE WITH NO REAL WAV "
-                 "FILE GIVEN ON THE COMMAND LINE NNNN")
-        print(f"Source: synthetic encoded message (no file given): {text!r}\n")
-        bits = encode_text(text)
-        sps = config.samples_per_symbol
-        rng = np.random.default_rng(0)
-        signal = np.empty(len(bits) * sps, dtype=np.float32)
-        phase = 0.0
-        idx = 0
-        for b in bits:
-            freq = config.mark_freq if b else config.space_freq
-            t = np.arange(sps) / config.sample_rate
-            signal[idx:idx + sps] = np.sin(2 * np.pi * freq * t + phase)
-            phase = (phase + 2 * np.pi * freq * sps / config.sample_rate) % (2 * np.pi)
-            idx += sps
-        signal += rng.normal(0, 0.1, size=signal.shape)
-
-        class _ArraySource(AudioSource):
-            def chunks(self):
-                for start in range(0, len(signal), 4096):
-                    yield signal[start:start + 4096]
-
-        source = _ArraySource()
-
-    windower = Windower(config)
-    detector = ToneDetector(config)
-    bitsync = BitSync(config)
-
-    decoded = ''.join(decode_bit_stream(
-        bitsync.process_stream(detector.process_stream(windower.frames(source)))
-    ))
-    print("Decoded text:")
-    print("-" * 60)
-    print(decoded)
-    print("-" * 60)
-
-
-if __name__ == '__main__':
-    _demo()

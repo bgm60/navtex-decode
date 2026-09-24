@@ -78,8 +78,6 @@ python test_step4_roundtrip.py
 
 - [`TUNING_REFERENCE.md`](TUNING_REFERENCE.md) — notes on tuning/calibrating
   the pipeline's parameters against real recordings.
-- [`docs/status-dashboard.html`](docs/status-dashboard.html) — a project
-  status snapshot.
 
 ## Credits / provenance
 

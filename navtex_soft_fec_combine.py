@@ -70,7 +70,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator, List, Optional
 
-from navtex_step1_sampling_windowing import NavtexConfig
 from navtex_step2_tone_detection import ToneSample
 from navtex_step3_bit_sync import BitDecision, BitSync
 from navtex_step4_character_decode import (
@@ -113,7 +112,6 @@ class SoftBitSync(BitSync):
         self._phase += self._phase_step
 
         if transition:
-            self.transitions_seen += 1
             if self._prev_diff is not None and self._prev_diff != sample.diff:
                 t = self._prev_diff / (self._prev_diff - sample.diff)
                 t = min(1.0, max(0.0, t))
@@ -128,18 +126,11 @@ class SoftBitSync(BitSync):
             total = sum(s.diff for s in self._buffer)
             decided_bit = total >= 0
             confidence = sum(abs(s.diff) for s in self._buffer) / len(self._buffer)
-            mean_power = sum(s.total_power for s in self._buffer) / len(self._buffer)
-            first = self._buffer[0]
             yield SoftBitDecision(
                 bit=decided_bit,
                 confidence=confidence,
-                mean_total_power=mean_power,
-                timestamp=first.timestamp,
-                start_sample=first.start_sample,
-                n_frames=len(self._buffer),
                 soft_value=total,
             )
-            self.symbols_emitted += 1
             self._buffer = []
             self._phase -= 1.0
 
@@ -152,12 +143,12 @@ class SoftBitSync(BitSync):
 
 
 # ---------------------------------------------------------------------------
-# Step 4, layer 1 extension: thread soft values alongside confidences
+# Step 4, layer 1 extension: thread soft values through character grouping
 # ---------------------------------------------------------------------------
 
 class SoftCharacterGrouper(CharacterGrouper):
-    """CharacterGrouper, but also groups soft_value per bit and yields it
-    as a third element alongside (code, confidences).
+    """CharacterGrouper, but groups soft_value per bit and yields it
+    alongside each codeword as (code, soft_values).
 
     Full copy of CharacterGrouper.push_bit() -- see module docstring's
     "KEEP IN SYNC BY HAND" note. Character-sync/phase-acquisition logic
@@ -174,8 +165,7 @@ class SoftCharacterGrouper(CharacterGrouper):
                           switch_margin, min_groups_for_acquire)
         self._group_soft: List[float] = []
 
-    def push_bit(self, bit: bool, confidence: float = 1.0,
-                 soft_value: float = 0.0) -> Iterator[tuple]:
+    def push_bit(self, bit: bool, soft_value: float = 0.0) -> Iterator[tuple]:
         self.sync.push_bit(bit)
         current_global_pos = self.sync._total_bits - 1
 
@@ -187,13 +177,11 @@ class SoftCharacterGrouper(CharacterGrouper):
             return
 
         self._group.append(bit)
-        self._group_confidence.append(confidence)
         self._group_soft.append(soft_value)
         if len(self._group) == 7:
             code = ''.join('1' if b else '0' for b in self._group)
-            yield code, list(self._group_confidence), list(self._group_soft)
+            yield code, list(self._group_soft)
             self._group = []
-            self._group_confidence = []
             self._group_soft = []
             self._reconsider()
 
@@ -236,11 +224,8 @@ class SoftFecCombiner(FecCombiner):
         # well-suited. dx/rx are already the correct hard decisions
         # (sign of dx_soft/rx_soft always matches them, since that's how
         # BitSync decided them in the first place), so they're passed
-        # through as-is; the abs() values stand in for the historical
-        # [0,1] confidence argument, only actually used if
-        # ENABLE_SINGLE_BIT_CORRECTION is turned on (off by default,
-        # inherited).
-        yield from super()._combine(dx, [abs(v) for v in dx_soft], rx, [abs(v) for v in rx_soft])
+        # through as-is.
+        yield from super()._combine(dx, dx_soft, rx, rx_soft)
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +247,7 @@ def decode_bit_stream_soft(bit_decisions: Iterator[SoftBitDecision],
     prev_phase: Optional[int] = None
     consecutive_phasing = 0
     for bd in bit_decisions:
-        for code, confidences, soft_values in grouper.push_bit(bd.bit, bd.confidence, bd.soft_value):
+        for code, soft_values in grouper.push_bit(bd.bit, bd.soft_value):
             if grouper._active_phase != prev_phase:
                 fec.reset()
                 prev_phase = grouper._active_phase

@@ -33,7 +33,7 @@ navtex_20260813_154210Z.txt -- timestamped by when decoding started, not
 per-message. Ctrl+C stops live decoding cleanly and closes the log file
 and audio device.
 
-Each logged line is prefixed "[YYYYMMDD HH:MM:SS] SS " where SS is a
+Each logged line is prefixed "[YYYYMMDD HH:MM:SS SS]" where SS is a
 two-digit (00-99) relative signal strength reading -- a rolling average of
 Step 3's per-bit confidence at the moment that line started, not a raw
 per-character value (see SignalStrengthTracker below).
@@ -58,7 +58,7 @@ import os
 import time
 from collections import deque
 from pathlib import Path
-from typing import Deque, Optional, TextIO
+from typing import Deque, TextIO
 
 from navtex_config import ConfigError, Profile, load_profile
 from navtex_step1_sampling_windowing import (
@@ -261,14 +261,6 @@ class TimestampedLineWriter:
         except OSError as e:
             self._recover_from_error("write", e)
 
-    def flush(self) -> None:
-        if self._disabled:
-            return
-        try:
-            self._f.flush()
-        except OSError as e:
-            self._recover_from_error("flush", e)
-
     def close(self) -> None:
         if self._disabled:
             return
@@ -435,13 +427,11 @@ def main() -> None:
 
     if not args.profile:
         parser.error("Provide a profile name (or use --list-devices)")
-        return
 
     try:
         profile = load_profile(args.config, args.profile)
     except ConfigError as e:
         parser.error(str(e))
-        return
 
     # Build a configuratuion objectfrom the profile settings and command line arguments.
 
