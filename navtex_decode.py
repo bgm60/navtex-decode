@@ -116,15 +116,16 @@ class SignalStrengthTracker:
     def update(self, confidence: float) -> None:
         self._values.append(confidence)
 
+    FLOOR = 0.55    # confidence at which decoding fails -> 00
+    CEILING = 0.92  # confidence of a clean, strong signal -> 99
+
     @property
     def level(self) -> int:
-        """Current reading, 0-99. 0 (not None/blank) until any bits have
-        arrived, so the very first log line -- before a full window has
-        accumulated -- still gets a sensible number rather than a gap."""
         if not self._values:
             return 0
         avg = sum(self._values) / len(self._values)
-        return max(0, min(99, round(avg * 99)))
+        scaled = (avg - self.FLOOR) / (self.CEILING - self.FLOOR)
+        return max(0, min(99, round(scaled * 99)))
 
 
 def tap_bit_decisions(bit_decisions, tracker: SignalStrengthTracker):

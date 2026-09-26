@@ -6,10 +6,10 @@
 # Every profile section is fully self-contained -- there is no shared
 # [defaults] section. Any key you omit from a profile falls back to the
 # code's built-in default (see navtex_config.py's Profile dataclass for
-# the full list and TUNING_REFERENCE.md for what each one does and why).
+# the full list and DOCUMENTATION.md for what each one does and why).
 #
 # Run with:
-#   python navtex_decode.py <profile_name> --config navtex.toml
+#   python navtex_decode.py <profile_name> [--config navtex.toml]
 
 # --- Decoding a WAV file, at the values currently validated against
 # real weak/fading recordings (see TUNING_REFERENCE.md) ---
