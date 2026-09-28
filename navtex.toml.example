@@ -26,6 +26,7 @@ min_groups_for_acquire = 25
 mode = "live"
 device = 4                 # index or a name substring; omit for the system default device
 log_dir = "D:/Radio/Logs/580kHz/"
+# db_file = "D:/Radio/Logs/580kHz.db"   # optional SQLite database log (use a local disk)
 loop_gain = 0.05
 char_drop_threshold = 0.46
 min_groups_for_acquire = 25
