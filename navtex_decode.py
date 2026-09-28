@@ -31,7 +31,9 @@ for the full schema and navtex.toml.example for a starting point.
 
 Each profile's `mode` key ("file" or "live") determines whether it reads
 a WAV file (`wav_file`) or a live input device (`device`, optional);
-`log_dir` (optional, any mode) enables logging to a directory.
+`log_dir` (optional, any mode) enables logging to a text file in that
+directory, and `db_file` (optional, any mode) enables logging to an
+SQLite database. Either, both or neither can be used.
 
 Log files are named navtex_<UTC timestamp>.txt, e.g.
 navtex_20260813_154210Z.txt -- timestamped by when decoding started, not
@@ -47,9 +49,10 @@ navtex_session.SignalStrengthTracker).
 from __future__ import annotations
 
 import argparse
+import sqlite3
 
 from navtex_config import ConfigError, load_profile
-from navtex_outputs import ConsoleSink, OutputSink, TextLogSink
+from navtex_outputs import ConsoleSink, OutputSink, SqliteLogSink, TextLogSink
 from navtex_session import DecodeSession, build_config, open_source
 
 
@@ -94,10 +97,20 @@ def main() -> None:
         print(f"Decoding file: {profile.wav_file}")
 
     sinks: list[OutputSink] = [ConsoleSink()]
-    if profile.log_dir:
-        log = TextLogSink(profile.log_dir, description)
-        print(f"Logging decoded text to: {log.path}")
-        sinks.append(log)
+    try:
+        if profile.log_dir:
+            log = TextLogSink(profile.log_dir, description)
+            print(f"Logging decoded text to: {log.path}")
+            sinks.append(log)
+        if profile.db_file:
+            db = SqliteLogSink(profile.db_file)
+            print(f"Logging decoded lines to database: {db.path}")
+            sinks.append(db)
+    except (OSError, sqlite3.Error) as e:
+        for sink in sinks:
+            sink.close()
+        source.close()
+        parser.exit(1, f"{parser.prog}: error: could not open log output: {e}\n")
 
     session = DecodeSession(source, profile, sinks)
     try:

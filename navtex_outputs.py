@@ -14,8 +14,8 @@ separately by every output.
             v
       LineAssembler  ----->  ConsoleSink
       (CR/LF rules,  ----->  TextLogSink
-       timestamps,   ----->  ... any other OutputSink
-       strength)
+       timestamps,   ----->  SqliteLogSink
+       strength)     ----->  ... any other OutputSink
 
 Line events
 ------------
@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -314,5 +315,139 @@ class TextLogSink(OutputSink):
         except OSError as reopen_error:
             self._warn(f"[log warning] could not reopen log file ({reopen_error}); "
                        "file logging disabled for the rest of this session "
+                       "(other output continues normally).")
+            self._disabled = True
+
+
+# ---------------------------------------------------------------------------
+# SQLite database
+# ---------------------------------------------------------------------------
+
+class SqliteLogSink(OutputSink):
+    """Writes each decoded line as a row in an SQLite database.
+
+    Table `navtex_log`, created if it does not already exist:
+
+        id               INTEGER PRIMARY KEY   row number, in arrival order
+        utc_timestamp    TEXT                  'YYYY-MM-DD HH:MM:SS', UTC time
+                                               the line started (SQLite's own
+                                               date/time format)
+        signal_strength  INTEGER               00-99 reading at line start
+        text_output      TEXT                  the line exactly as decoded,
+                                               without its CR/LF
+
+    An index on utc_timestamp keeps time-range queries fast as the table
+    grows.
+
+    Rows are appended, so one database accumulates lines across any
+    number of sessions. Lines that are empty or contain only spaces are
+    not stored. Each row is committed as soon as its line ends, so
+    nothing already written is lost if the program or computer stops
+    unexpectedly; an unfinished last line is saved when the session
+    closes.
+
+    The database uses WAL journal mode, which lets other programs (or a
+    future GUI) read it while the decoder is writing. WAL needs the
+    database to be on a local disk: on a network or cloud-synced drive
+    SQLite may refuse WAL (a warning is printed and the default mode is
+    used) or, worse, behave unreliably, so a local path is strongly
+    recommended.
+
+    On a database error, the connection is closed and reopened once and
+    the failed row retried. If that also fails, database logging is
+    disabled for the rest of the session with a warning, while decoding
+    and every other output carry on normally.
+
+    The connection may be used from a thread other than the one that
+    created the sink (a GUI creates sinks on its own thread and decodes
+    on a worker thread); it is only ever used by one thread at a time.
+    """
+
+    TABLE = "navtex_log"
+
+    def __init__(self, db_file: str, warn: WarnFn = warn_to_stderr,
+                 busy_timeout: float = 10.0):
+        self.path = Path(db_file)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._warn = warn
+        self._busy_timeout = busy_timeout
+        self._disabled = False
+        self._timestamp = ""
+        self._strength = 0
+        self._text: List[str] = []
+        self._conn = self._connect()
+
+    def line_start(self, timestamp: datetime.datetime, strength: int) -> None:
+        self._timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        self._strength = strength
+        self._text = []
+
+    def write(self, text: str) -> None:
+        self._text.append(text.replace("\r", "").replace("\n", ""))
+
+    def line_end(self) -> None:
+        text = "".join(self._text)
+        self._text = []
+        if self._disabled or not text.strip():
+            return
+        row = (self._timestamp, self._strength, text)
+        try:
+            self._insert(row)
+        except sqlite3.Error as e:
+            self._recover_from_error(e, row)
+
+    def close(self) -> None:
+        if self._disabled:
+            return
+        try:
+            self._conn.close()
+        except sqlite3.Error as e:
+            self._warn(f"[database warning] error closing database ({e}) -- ignoring, shutting down anyway.")
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, timeout=self._busy_timeout,
+                               check_same_thread=False)
+        try:
+            mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            if mode.lower() != "wal":
+                self._warn(f"[database warning] {self.path} could not use WAL mode "
+                           f"(using {mode!r}); other programs may be blocked from "
+                           "reading it while decoding. Is it on a network drive?")
+            conn.execute(f"""CREATE TABLE IF NOT EXISTS {self.TABLE} (
+                                 id              INTEGER PRIMARY KEY,
+                                 utc_timestamp   TEXT    NOT NULL,
+                                 signal_strength INTEGER NOT NULL,
+                                 text_output     TEXT    NOT NULL)""")
+            conn.execute(f"CREATE INDEX IF NOT EXISTS {self.TABLE}_utc_timestamp "
+                         f"ON {self.TABLE} (utc_timestamp)")
+            conn.commit()
+        except sqlite3.Error:
+            conn.close()
+            raise
+        return conn
+
+    def _insert(self, row: tuple) -> None:
+        with self._conn:   # commits on success, rolls back on error
+            self._conn.execute(
+                f"INSERT INTO {self.TABLE} (utc_timestamp, signal_strength, text_output) "
+                "VALUES (?, ?, ?)", row)
+
+    def _recover_from_error(self, error: Exception, row: tuple) -> None:
+        self._warn(f"\n[database warning] database write failed ({error}); attempting to reconnect...")
+        try:
+            self._conn.close()
+        except sqlite3.Error:
+            pass
+        try:
+            self._conn = self._connect()
+            self._insert(row)
+            self._warn("[database warning] database reconnected successfully, continuing.")
+        except sqlite3.Error as retry_error:
+            try:
+                self._conn.close()
+            except sqlite3.Error:
+                pass
+            self._warn(f"[database warning] could not reconnect to database ({retry_error}); "
+                       "database logging disabled for the rest of this session "
                        "(other output continues normally).")
             self._disabled = True

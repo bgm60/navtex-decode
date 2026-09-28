@@ -81,6 +81,7 @@ class Profile:
     wav_file: Optional[str] = None  # required if mode == "file"
     device: Optional[Union[int, str]] = None  # index or name-substring; only used if mode == "live"
     log_dir: Optional[str] = None   # omit to disable logging
+    db_file: Optional[str] = None   # SQLite database path; omit to disable database logging
 
     # --- Step 1: sampling/windowing (NavtexConfig) ---
     # Calibration values -- specific to a given receiver/SDR setup, not
