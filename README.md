@@ -36,8 +36,10 @@ stage and of every configuration parameter.
 
 | File | Purpose |
 |---|---|
-| `navtex_decode.py` | Application entry point: loads a profile, runs the pipeline, writes console output and log files. |
+| `navtex_decode.py` | Command-line front end. |
 | `navtex_config.py` | Loads and validates TOML configuration profiles. |
+| `navtex_session.py` | Builds the pipeline from a profile, opens the audio and runs the decode loop |
+| `navtex_outputs.py` | Formatting and control of decoder output - console, file log & SQL in future |
 | `navtex_step1_sampling_windowing.py` | Audio sources and the frame windower. |
 | `navtex_step2_tone_detection.py` | Mark/space tone detector. |
 | `navtex_step3_bit_sync.py` | Bit-decision type and bit-clock loop state. |

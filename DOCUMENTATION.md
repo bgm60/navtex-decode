@@ -28,8 +28,10 @@ its settings come from a named profile in a TOML configuration file.
 
 | File | Role |
 |---|---|
-| `navtex_decode.py` | Entry point. Loads a profile, builds the pipeline, handles console output and logging. |
+| `navtex_decode.py` | Command-line front end. |
 | `navtex_config.py` | Loads, type-checks and validates TOML profiles. |
+| `navtex_session.py` | Builds the pipeline from a profile, opens the audio and runs the decode loop |
+| `navtex_outputs.py` | Formatting and control of decoder output - console, file log & SQL in future |
 | `navtex_step1_sampling_windowing.py` | Audio sources (live device, WAV file) and the windower that produces analysis frames. |
 | `navtex_step2_tone_detection.py` | Measures mark and space tone energy in each frame. |
 | `navtex_step3_bit_sync.py` | Bit-decision data type and the shared state of the bit-clock recovery loop. |
@@ -349,7 +351,8 @@ reading:
 ```
 
 The signal-strength reading (00–99) is the average of the per-bit
-`confidence` over the last `signal_strength_window` bits, scaled to 0–99.
+`confidence` over the last `signal_strength_window` bits. It is scaled to
+ cover the range 0–99 by using FLOOR and CEILING coonstants.
 It is a relative measure of how cleanly the tones are being separated, not
 a calibrated signal level. Any of a CR, an LF, or a CR LF pair counts as
 the end of a line, so a line ending damaged by noise still starts a new

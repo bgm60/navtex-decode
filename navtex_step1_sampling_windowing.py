@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import queue
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
@@ -141,10 +142,18 @@ class Frame:
 # ---------------------------------------------------------------------------
 
 class AudioSource:
-    """Common interface: iterate over it to get raw audio chunks."""
+    """Common interface: iterate over chunks() to get raw audio chunks.
+
+    stop() asks chunks() to finish at the next opportunity, so a decoding
+    session can be ended cleanly (for example from a GUI's Stop button).
+    It may be called from any thread, before or during iteration.
+    """
 
     def chunks(self) -> Iterator[np.ndarray]:
         raise NotImplementedError
+
+    def stop(self) -> None:
+        pass
 
     def close(self) -> None:
         pass
@@ -162,7 +171,8 @@ class LiveMicSource(AudioSource):
         self.config = config
         self.device = device
         self.block_size = round(config.sample_rate * block_ms / 1000)
-        self._queue: "queue.Queue[np.ndarray]" = queue.Queue()
+        # Audio chunks from the callback thread; None is the stop marker.
+        self._queue: "queue.Queue[Optional[np.ndarray]]" = queue.Queue()
         self._stream = sd.InputStream(
             samplerate=config.sample_rate,
             channels=1,
@@ -182,9 +192,16 @@ class LiveMicSource(AudioSource):
         self._stream.start()
         try:
             while True:
-                yield self._queue.get()
+                chunk = self._queue.get()
+                if chunk is None:
+                    return
+                yield chunk
         finally:
             self._stream.stop()
+
+    def stop(self) -> None:
+        # Wakes chunks() even while it is waiting for audio.
+        self._queue.put(None)
 
     def close(self) -> None:
         self._stream.close()
@@ -203,16 +220,22 @@ class FileSource(AudioSource):
         self.config = config
         self.path = path
         self.block_size = block_size
+        self._stop_requested = threading.Event()
 
     def chunks(self) -> Iterator[np.ndarray]:
         with sf.SoundFile(self.path) as f:
             native_rate = f.samplerate
             for block in f.blocks(blocksize=self.block_size, dtype="float32",
                                    always_2d=True):
+                if self._stop_requested.is_set():
+                    return
                 mono = block.mean(axis=1)
                 if native_rate != self.config.sample_rate:
                     mono = resample_poly(mono, self.config.sample_rate, native_rate)
                 yield mono.astype(np.float32)
+
+    def stop(self) -> None:
+        self._stop_requested.set()
 
 
 # ---------------------------------------------------------------------------
