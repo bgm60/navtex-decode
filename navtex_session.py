@@ -18,14 +18,23 @@ Typical use:
 
 `run()` blocks, so a GUI runs it on a worker thread and calls `stop()`
 from the GUI thread; stop() is safe to call from any thread.
-`session.tracker.level` gives the current 00-99 signal-strength reading
-at any time, for example to drive a meter.
+
+While it runs, three read-only values can be polled from any thread, for
+example to drive meters:
+
+    session.tracker.level         00-99 signal-strength reading
+    session.audio_level.peak_dbfs  audio input peak level, dB full scale
+    session.sync_state             "searching", "sync" or "locked"
 """
 
 from __future__ import annotations
 
+import math
+import time
 from collections import deque
-from typing import Deque, Iterable, Iterator, Tuple
+from typing import Callable, Deque, Iterable, Iterator, Optional, Tuple
+
+import numpy as np
 
 from navtex_config import Profile
 from navtex_outputs import LineAssembler, OutputSink, WarnFn, warn_to_stderr
@@ -86,17 +95,85 @@ class SignalStrengthTracker:
         return max(0, min(99, round(scaled * 99)))
 
 
-def tap_bit_decisions(bit_decisions, tracker: SignalStrengthTracker):
+def tap_bit_decisions(bit_decisions, tracker: SignalStrengthTracker,
+                      hook: Optional[Callable[[], None]] = None, every: int = 50):
     """Passes the bit-decision stream through unchanged, updating
-    `tracker` with each bit's confidence on the way.
+    `tracker` with each bit's confidence on the way, and calling `hook`
+    (if given) once every `every` bits.
 
     Generators are pull-based, so by the time a decoded character comes
     out of Step 4, `tracker` already includes every bit used to produce
     it, and reading it at that point gives a current value.
     """
+    count = 0
     for bd in bit_decisions:
         tracker.update(bd.confidence)
+        if hook is not None:
+            count += 1
+            if count >= every:
+                count = 0
+                hook()
         yield bd
+
+
+# ---------------------------------------------------------------------------
+# Audio input level
+# ---------------------------------------------------------------------------
+
+class AudioLevelMeter:
+    """Peak level of the incoming audio, for setting sound-card gain.
+
+    This is separate from the signal-strength reading: it says nothing
+    about decoding, only whether the audio reaching the decoder is too
+    quiet, sensible, or clipping. The decoder itself is gain-independent,
+    so anything comfortably below clipping works.
+
+    Values are updated on the decoding thread and may be read from any
+    thread.
+    """
+
+    PEAK_HOLD = 0.3        # seconds: peak_dbfs is the highest level over this period
+    CLIP_HOLD = 2.0        # seconds: clipping stays flagged this long after it happens
+    CLIP_LEVEL = 0.999     # |sample| at or above this counts as clipping
+    SILENCE_DBFS = -100.0  # reported when there is no audio at all
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._peaks: Deque[Tuple[float, float]] = deque(maxlen=256)  # (time, peak)
+        self._last_clip = -math.inf
+
+    def update(self, chunk: np.ndarray) -> None:
+        if len(chunk) == 0:
+            return
+        peak = float(np.max(np.abs(chunk)))
+        now = self._clock()
+        self._peaks.append((now, peak))
+        if peak >= self.CLIP_LEVEL:
+            self._last_clip = now
+
+    @property
+    def peak_dbfs(self) -> float:
+        """Highest peak over the last PEAK_HOLD seconds, in dBFS (0 dB is
+        full scale). SILENCE_DBFS if nothing recent has arrived."""
+        cutoff = self._clock() - self.PEAK_HOLD
+        recent = [peak for t, peak in list(self._peaks) if t >= cutoff]
+        peak = max(recent, default=0.0)
+        if peak <= 0.0:
+            return self.SILENCE_DBFS
+        return max(self.SILENCE_DBFS, 20.0 * math.log10(peak))
+
+    @property
+    def clipping(self) -> bool:
+        """True if the audio clipped within the last CLIP_HOLD seconds."""
+        return self._clock() - self._last_clip <= self.CLIP_HOLD
+
+
+def tap_chunks(source: AudioSource, meter: AudioLevelMeter) -> Iterator[np.ndarray]:
+    """Passes the source's audio chunks through unchanged, updating
+    `meter` on the way."""
+    for chunk in source.chunks():
+        meter.update(chunk)
+        yield chunk
 
 
 # ---------------------------------------------------------------------------
@@ -114,16 +191,19 @@ def build_config(profile: Profile) -> NavtexConfig:
     )
 
 
-def open_live_source(config: NavtexConfig, device=None) -> Tuple[AudioSource, str]:
-    """Opens a live audio input. `device` is an index, a name substring,
-    or None for the system default. A numeric string is treated as an
-    index. Returns the source and a human-readable description."""
+def open_live_source(config: NavtexConfig, device=None,
+                     warn: Optional[WarnFn] = None) -> Tuple[AudioSource, str]:
+    """Opens a live audio input. `device` is an index, a name substring
+    (or "name, host API"), or None for the system default. A numeric
+    string is treated as an index. Audio driver warnings go to `warn`,
+    which is called on the audio driver's thread, or to stderr if None.
+    Returns the source and a human-readable description."""
     if device is not None:
         try:
             device = int(device)
         except ValueError:
             pass  # a name substring; sounddevice accepts that too
-    source = LiveMicSource(config, device=device)
+    source = LiveMicSource(config, device=device, warn=warn)
     description = (f"live audio device {device!r}" if device is not None
                    else "live audio (default device)")
     return source, description
@@ -137,31 +217,53 @@ def open_source(profile: Profile, config: NavtexConfig) -> Tuple[AudioSource, st
     return FileSource(config, profile.wav_file), f"WAV file {profile.wav_file!r}"
 
 
-def decode_characters(source: AudioSource, profile: Profile,
-                      tracker: SignalStrengthTracker) -> Iterator[str]:
-    """The full Step 1-4 pipeline: audio in, decoded characters out.
-    Updates `tracker` with every bit decision along the way."""
-    config = build_config(profile)
-    windower = Windower(config)
-    detector = ToneDetector(config)
-    bitsync = SoftBitSync(config, loop_gain=profile.loop_gain)
-    grouper = SoftCharacterGrouper(
+def build_grouper(profile: Profile) -> SoftCharacterGrouper:
+    return SoftCharacterGrouper(
         sync_window=profile.sync_window,
         acquire_threshold=profile.char_acquire_threshold,
         drop_threshold=profile.char_drop_threshold,
         switch_margin=profile.char_switch_margin,
         min_groups_for_acquire=profile.min_groups_for_acquire,
     )
-    fec = SoftFecCombiner(
+
+
+def build_fec(profile: Profile) -> SoftFecCombiner:
+    return SoftFecCombiner(
         lock_window=profile.lock_window,
         acquire_threshold=profile.fec_acquire_threshold,
         switch_margin=profile.fec_switch_margin,
         min_samples_for_rate=profile.min_samples_for_rate,
         rate_window=profile.rate_window,
     )
+
+
+def decode_characters(source: AudioSource, profile: Profile,
+                      tracker: SignalStrengthTracker,
+                      grouper: Optional[SoftCharacterGrouper] = None,
+                      fec: Optional[SoftFecCombiner] = None,
+                      audio_level: Optional[AudioLevelMeter] = None,
+                      bit_hook: Optional[Callable[[], None]] = None,
+                      hook_every: int = 50) -> Iterator[str]:
+    """The full Step 1-4 pipeline: audio in, decoded characters out.
+    Updates `tracker` with every bit decision along the way, and
+    `audio_level` (if given) with every audio chunk, and calls `bit_hook`
+    (if given) every `hook_every` bits. `grouper` and `fec` are built from
+    the profile unless supplied (DecodeSession supplies its own so it can
+    report their status)."""
+    config = build_config(profile)
+    windower = Windower(config)
+    detector = ToneDetector(config)
+    bitsync = SoftBitSync(config, loop_gain=profile.loop_gain)
+    grouper = grouper if grouper is not None else build_grouper(profile)
+    fec = fec if fec is not None else build_fec(profile)
+    if audio_level is None:
+        frames = windower.frames(source)
+    else:
+        frames = (frame for chunk in tap_chunks(source, audio_level)
+                  for frame in windower.push(chunk))
     bit_decisions = tap_bit_decisions(
-        bitsync.process_stream(detector.process_stream(windower.frames(source))),
-        tracker,
+        bitsync.process_stream(detector.process_stream(frames)),
+        tracker, hook=bit_hook, every=hook_every,
     )
     return decode_bit_stream_soft(bit_decisions, grouper=grouper, fec=fec,
                                   phasing_burst_threshold=profile.phasing_burst_threshold)
@@ -178,25 +280,56 @@ class DecodeSession:
     run() decodes until the source ends or stop() is called, then closes
     every sink and the source, including when it exits with an exception
     (such as KeyboardInterrupt in the CLI).
+
+    `sync_state` is one of:
+        "searching"  no character alignment: no signal, or only noise
+        "sync"       bits are grouping into valid characters, but no
+                     message text is being combined yet (phasing between
+                     messages, or the start of a message)
+        "locked"     message text is being decoded
+    It is refreshed about twice a second of audio.
     """
+
+    SYNC_CHECK_BITS = 50   # how often (in bits) sync_state is refreshed
 
     def __init__(self, source: AudioSource, profile: Profile,
                  sinks: Iterable[OutputSink], warn: WarnFn = warn_to_stderr):
         self.source = source
         self.profile = profile
         self.tracker = SignalStrengthTracker(window=profile.signal_strength_window)
+        self.audio_level = AudioLevelMeter()
+        self.sync_state = "searching"
+        self._grouper = build_grouper(profile)
+        self._fec = build_fec(profile)
         self._sinks = list(sinks)
         self._warn = warn
 
     def run(self) -> None:
-        assembler = LineAssembler(self._sinks, strength=lambda: self.tracker.level,
+        assembler = LineAssembler(self._sinks, strength=self._strength,
                                   warn=self._warn)
         try:
-            for ch in decode_characters(self.source, self.profile, self.tracker):
+            for ch in decode_characters(self.source, self.profile, self.tracker,
+                                        grouper=self._grouper, fec=self._fec,
+                                        audio_level=self.audio_level,
+                                        bit_hook=self._update_sync_state,
+                                        hook_every=self.SYNC_CHECK_BITS):
                 assembler.feed(ch)
         finally:
             assembler.close()
             self.source.close()
+
+    def _strength(self) -> int:
+        return self.tracker.level
+
+    def _update_sync_state(self) -> None:
+        # Runs on the decoding thread (the only thread that touches the
+        # grouper and combiner), called from the bit-decision tap.
+        if not self._grouper.in_sync():
+            self.sync_state = "searching"
+        elif self._fec.in_lock():
+            self.sync_state = "locked"
+        else:
+            self.sync_state = "sync"
 
     def stop(self) -> None:
         """Asks the session to finish. Returns immediately; run() returns

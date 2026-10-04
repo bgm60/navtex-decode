@@ -306,6 +306,18 @@ class CharacterGrouper:
             self._active_phase = best_phase
             self._group = []
 
+    def in_sync(self) -> bool:
+        """True while a character alignment is locked AND still scoring
+        at least DROP_THRESHOLD, i.e. bits are genuinely grouping into
+        valid codewords. The lock itself can persist through noise (it is
+        only abandoned for a clearly better alignment), so the score
+        check is what makes this a fair "is there a signal" indicator.
+        For status display only; not used by decoding."""
+        if self._active_phase is None:
+            return False
+        score, n = self.sync.score_phase(self._active_phase)
+        return n > 0 and score >= self.DROP_THRESHOLD
+
     def _reconsider(self) -> None:
         active_score, active_n = self.sync.score_phase(self._active_phase)
         if active_n == 0:
@@ -521,6 +533,15 @@ class FecCombiner:
         dx, dx_conf = self._history[-1 - self.LAG]
         rx, rx_conf = self._history[-1]
         yield from self._combine(dx, dx_conf, rx, rx_conf)
+
+    def in_lock(self) -> bool:
+        """True while a DX/RX parity is locked AND its recent match rate
+        is at least ACQUIRE_THRESHOLD, i.e. message text is genuinely
+        being combined. For status display only; not used by decoding."""
+        if self._parity is None:
+            return False
+        rate = self._rate(self._parity)
+        return rate is not None and rate >= self.ACQUIRE_THRESHOLD
 
     def _rate(self, parity: int) -> Optional[float]:
         m = self._matches[parity]

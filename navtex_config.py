@@ -38,6 +38,7 @@ mirror the values documented in DOCUMENTATION.md
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -263,3 +264,158 @@ def load_profile(config_path: str, profile_name: str) -> Profile:
     profile = Profile(**kwargs)
     profile.validate()
     return profile
+
+
+# ---------------------------------------------------------------------------
+# Listing and saving profiles (used by the GUI)
+# ---------------------------------------------------------------------------
+#
+# Saving uses the third-party `tomlkit` package rather than the standard
+# library, because tomllib can only read TOML. tomlkit edits the file in
+# place, keeping its comments, ordering and layout, so a profile saved
+# from the GUI changes only the keys that changed. It is imported only
+# when needed, so the command-line tool does not require it.
+
+STARTER_CONFIG = """\
+# NAVTEX Decoder profiles.
+#
+# Each [section] is one self-contained profile. Any key left out uses the
+# built-in default. Profiles can be edited here or from the GUI's
+# Settings dialog; see DOCUMENTATION.md for what each key does.
+
+[default]
+mode = "live"
+"""
+
+
+def read_profile_tables(config_path: str) -> dict:
+    """Every profile table in the file, as plain dicts keyed by profile
+    name, without validating them. Raises ConfigError if the file is
+    missing or is not valid TOML."""
+    path = Path(config_path)
+    if not path.is_file():
+        raise ConfigError(f"config file not found: {config_path}")
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"could not parse {config_path}: {e}") from e
+    return {name: table for name, table in data.items() if isinstance(table, dict)}
+
+
+def load_profile_for_editing(config_path: str, profile_name: str):
+    """Like load_profile, but for an editor that must be able to open a
+    profile even when it is invalid, so the problem can be fixed.
+
+    Returns (profile, problem). If the profile is valid, problem is None.
+    Otherwise problem is load_profile's error message, and the profile
+    holds every value that could be read, with built-in defaults for any
+    unknown or wrongly-typed key. The result is NOT validated; saving it
+    with save_profile validates it.
+    """
+    try:
+        return load_profile(config_path, profile_name), None
+    except ConfigError as e:
+        problem = str(e)
+    tables = read_profile_tables(config_path)
+    if profile_name not in tables:
+        raise ConfigError(problem)
+    resolved_types = get_type_hints(Profile)
+    known_fields = {f.name: resolved_types[f.name] for f in fields(Profile)}
+    kwargs: dict = {}
+    for key, raw_value in tables[profile_name].items():
+        if key in known_fields:
+            try:
+                kwargs[key] = _coerce(key, known_fields[key], raw_value)
+            except ConfigError:
+                pass
+    return Profile(**kwargs), problem
+
+
+def _load_document(path: Path):
+    import tomlkit
+    try:
+        return tomlkit.parse(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ConfigError(f"config file not found: {path}") from None
+    except tomlkit.exceptions.ParseError as e:
+        raise ConfigError(f"could not parse {path}: {e}") from e
+
+
+def _write_document(path: Path, doc) -> None:
+    # Write to a temporary file and swap it in, so a failure part-way
+    # through never leaves a half-written config file behind.
+    import tomlkit
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(tomlkit.dumps(doc), encoding="utf-8", newline="")
+    os.replace(tmp, path)
+
+
+def save_profile(config_path: str, name: str, profile: Profile) -> None:
+    """Validates `profile` and writes it to the file as [name], creating
+    the section if it does not exist yet.
+
+    Within an existing section, keys already present are updated in
+    place (keeping any comment on the same line), keys whose value now
+    differs from the built-in default are added (after the section's
+    existing keys), and optional keys that are now unset (log_dir,
+    db_file, device...) are removed. `mode` is always written. A key that
+    is present but equal to its default is left in place, so the file
+    never loses something the user wrote deliberately.
+    """
+    import tomlkit
+    profile.validate()
+    path = Path(config_path)
+    doc = _load_document(path)
+    defaults = Profile()
+    if name in doc:
+        table = doc[name]
+        if not isinstance(table, dict):
+            raise ConfigError(f"[{name}] in {config_path} is not a table")
+    else:
+        doc[name] = tomlkit.table()
+        table = doc[name]
+    for f in fields(Profile):
+        value = getattr(profile, f.name)
+        if value is None:
+            if f.name in table:
+                del table[f.name]
+        elif f.name in table:
+            if table[f.name] != value:
+                old = table.item(f.name)
+                new = tomlkit.item(value)
+                new.trivia.comment = old.trivia.comment
+                new.trivia.comment_ws = old.trivia.comment_ws
+                table[f.name] = new
+        elif value != getattr(defaults, f.name) or f.name == "mode":
+            _add_key(table, f.name, value)
+    _write_document(path, doc)
+
+
+def _add_key(table, key: str, value) -> None:
+    """Adds a key directly after the table's last existing key, rather
+    than at the very end of the table. Comments that sit after a table's
+    last key usually introduce the NEXT section, so appending after them
+    would make the new key look as if it belonged to that section."""
+    import tomlkit
+    body = table.value.body
+    last_index = max((i for i, (k, _) in enumerate(body) if k is not None), default=None)
+    if last_index is None or last_index == len(body) - 1:
+        table[key] = value
+    else:
+        # Container._insert_at is not part of tomlkit's documented API,
+        # so fall back to a plain append if it ever changes.
+        try:
+            table.value._insert_at(last_index + 1, key, tomlkit.item(value))
+        except (AttributeError, TypeError):
+            table[key] = value
+
+
+def delete_profile(config_path: str, name: str) -> None:
+    """Removes [name] from the file. Raises ConfigError if it is not there."""
+    path = Path(config_path)
+    doc = _load_document(path)
+    if name not in doc:
+        raise ConfigError(f"no profile named {name!r} in {config_path}")
+    del doc[name]
+    _write_document(path, doc)

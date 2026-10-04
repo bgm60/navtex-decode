@@ -56,7 +56,7 @@ import queue
 import sys
 import threading
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Callable, Iterator, List, NamedTuple, Optional
 
 import numpy as np
 from scipy.signal import get_window as _sp_get_window
@@ -165,11 +165,13 @@ class LiveMicSource(AudioSource):
     """
 
     def __init__(self, config: NavtexConfig, device: Optional[int | str] = None,
-                 block_ms: float = 20.0):
+                 block_ms: float = 20.0,
+                 warn: Optional[Callable[[str], None]] = None):
         if not _HAVE_SOUNDDEVICE:
             raise RuntimeError("sounddevice is not installed: pip install sounddevice")
         self.config = config
         self.device = device
+        self._warn = warn
         self.block_size = round(config.sample_rate * block_ms / 1000)
         # Audio chunks from the callback thread; None is the stop marker.
         self._queue: "queue.Queue[Optional[np.ndarray]]" = queue.Queue()
@@ -184,8 +186,14 @@ class LiveMicSource(AudioSource):
 
     def _callback(self, indata, frames, time_info, status):
         if status:
-            # Overflow/underflow etc. — surface it but keep running.
-            print(f"[LiveMicSource] audio status: {status}", file=sys.stderr)
+            # Overflow/underflow etc. — surface it but keep running. This
+            # runs on the audio driver's thread; `warn` must be safe to
+            # call from there (a Qt signal emit is).
+            message = f"[LiveMicSource] audio status: {status}"
+            if self._warn is None:
+                print(message, file=sys.stderr)
+            else:
+                self._warn(message)
         self._queue.put(indata[:, 0].copy())
 
     def chunks(self) -> Iterator[np.ndarray]:
@@ -205,6 +213,48 @@ class LiveMicSource(AudioSource):
 
     def close(self) -> None:
         self._stream.close()
+
+
+class InputDevice(NamedTuple):
+    """One audio input device, as offered in a device picker."""
+    index: int          # sounddevice index (can change when devices are added/removed)
+    name: str           # device name as reported by the driver
+    hostapi: str        # host API, e.g. "MME", "Windows WASAPI", "ALSA"
+    query: str          # "name, hostapi": a stable value to store in a profile
+    usable: bool        # True if it accepted the requested sample rate, mono
+    is_default: bool    # the system's default input device
+
+
+def list_input_devices(sample_rate: int) -> List[InputDevice]:
+    """Every audio device with at least one input channel, checked for
+    whether it can capture at `sample_rate` in mono.
+
+    `query` ("device name, host API") is what a profile should store:
+    unlike the index it survives devices being plugged in or removed,
+    and sounddevice treats an exact match on it as unambiguous even when
+    the same device appears under several host APIs (as on Windows).
+    """
+    if not _HAVE_SOUNDDEVICE:
+        raise RuntimeError("sounddevice is not installed: pip install sounddevice")
+    try:
+        default_input = sd.default.device[0]
+    except Exception:  # noqa: BLE001 -- no default device is not an error here
+        default_input = -1
+    devices = []
+    for index, info in enumerate(sd.query_devices()):
+        if info["max_input_channels"] < 1:
+            continue
+        hostapi = sd.query_hostapis(info["hostapi"])["name"]
+        try:
+            sd.check_input_settings(device=index, channels=1, dtype="float32",
+                                    samplerate=sample_rate)
+            usable = True
+        except Exception:  # noqa: BLE001 -- PortAudio raises various types
+            usable = False
+        devices.append(InputDevice(index, info["name"], hostapi,
+                                   f"{info['name']}, {hostapi}", usable,
+                                   index == default_input))
+    return devices
 
 
 class FileSource(AudioSource):
