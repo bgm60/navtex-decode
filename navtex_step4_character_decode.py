@@ -306,13 +306,18 @@ class CharacterGrouper:
             self._active_phase = best_phase
             self._group = []
 
+    def is_aligned(self) -> bool:
+        """True while a character alignment is held. The decoder holds it
+        through fades and noise until a clearly better one appears, so
+        this alone does not mean a signal is present. For status display
+        only; not used by decoding."""
+        return self._active_phase is not None
+
     def in_sync(self) -> bool:
-        """True while a character alignment is locked AND still scoring
-        at least DROP_THRESHOLD, i.e. bits are genuinely grouping into
-        valid codewords. The lock itself can persist through noise (it is
-        only abandoned for a clearly better alignment), so the score
-        check is what makes this a fair "is there a signal" indicator.
-        For status display only; not used by decoding."""
+        """True while an alignment is held AND is still scoring at least
+        DROP_THRESHOLD, i.e. bits are genuinely grouping into valid
+        codewords right now. For status display only; not used by
+        decoding."""
         if self._active_phase is None:
             return False
         score, n = self.sync.score_phase(self._active_phase)
@@ -534,14 +539,17 @@ class FecCombiner:
         rx, rx_conf = self._history[-1]
         yield from self._combine(dx, dx_conf, rx, rx_conf)
 
-    def in_lock(self) -> bool:
-        """True while a DX/RX parity is locked AND its recent match rate
-        is at least ACQUIRE_THRESHOLD, i.e. message text is genuinely
-        being combined. For status display only; not used by decoding."""
+    def match_rate(self) -> Optional[float]:
+        """Recent fraction of exact DX/RX matches on the locked parity, or
+        None if no parity is locked or there are too few comparisons yet.
+        Soft combining can still recover text well below
+        ACQUIRE_THRESHOLD, so this is a measure of how much is getting
+        through, not a lock test. The value only changes while codewords
+        are arriving, i.e. while the character grouper holds an
+        alignment. For status display only; not used by decoding."""
         if self._parity is None:
-            return False
-        rate = self._rate(self._parity)
-        return rate is not None and rate >= self.ACQUIRE_THRESHOLD
+            return None
+        return self._rate(self._parity)
 
     def _rate(self, parity: int) -> Optional[float]:
         m = self._matches[parity]

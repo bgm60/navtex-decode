@@ -24,7 +24,7 @@ example to drive meters:
 
     session.tracker.level         00-99 signal-strength reading
     session.audio_level.peak_dbfs  audio input peak level, dB full scale
-    session.sync_state             "searching", "sync" or "locked"
+    session.sync_state             "searching", "sync" or "data"
 """
 
 from __future__ import annotations
@@ -284,13 +284,24 @@ class DecodeSession:
     `sync_state` is one of:
         "searching"  no character alignment: no signal, or only noise
         "sync"       bits are grouping into valid characters, but no
-                     message text is being combined yet (phasing between
+                     message text is getting through (phasing between
                      messages, or the start of a message)
-        "locked"     message text is being decoded
+        "data"       message text is being decoded. On a weak signal
+                     some characters may be wrong; the signal-strength
+                     reading says how good reception is.
     It is refreshed about twice a second of audio.
+
+    "data" means the character alignment is held and the locked DX/RX
+    parity's recent match rate is at least DATA_MIN_MATCH_RATE. Measured
+    with synthetic signals, correct text still came through at match
+    rates down to about 0.17, while noise with the alignment still held
+    gave 0.00. Requiring the alignment matters: once it is lost, no new
+    codewords reach the combiner, so its match rate freezes at its last
+    value instead of falling.
     """
 
-    SYNC_CHECK_BITS = 50   # how often (in bits) sync_state is refreshed
+    SYNC_CHECK_BITS = 50          # how often (in bits) sync_state is refreshed
+    DATA_MIN_MATCH_RATE = 0.15
 
     def __init__(self, source: AudioSource, profile: Profile,
                  sinks: Iterable[OutputSink], warn: WarnFn = warn_to_stderr):
@@ -324,12 +335,14 @@ class DecodeSession:
     def _update_sync_state(self) -> None:
         # Runs on the decoding thread (the only thread that touches the
         # grouper and combiner), called from the bit-decision tap.
-        if not self._grouper.in_sync():
-            self.sync_state = "searching"
-        elif self._fec.in_lock():
-            self.sync_state = "locked"
-        else:
+        rate = self._fec.match_rate()
+        if (self._grouper.is_aligned() and rate is not None
+                and rate >= self.DATA_MIN_MATCH_RATE):
+            self.sync_state = "data"
+        elif self._grouper.in_sync():
             self.sync_state = "sync"
+        else:
+            self.sync_state = "searching"
 
     def stop(self) -> None:
         """Asks the session to finish. Returns immediately; run() returns

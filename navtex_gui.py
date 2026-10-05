@@ -54,8 +54,9 @@ from collections import deque
 from pathlib import Path
 from typing import Deque, List, Optional, Tuple
 
-from PyQt6.QtCore import QObject, QSettings, Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QCloseEvent, QFontDatabase, QStandardItemModel, QTextCursor
+from PyQt6.QtCore import QObject, QPointF, QRectF, QSettings, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import (QAction, QActionGroup, QCloseEvent, QColor, QFontDatabase, QIcon, QPainter,
+                         QPalette, QPixmap, QPolygonF, QStandardItemModel, QTextCursor)
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -79,7 +80,6 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QStyle,
     QTabWidget,
     QToolBar,
     QToolButton,
@@ -237,8 +237,8 @@ QProgressBar {{
     border: 1px solid palette(mid);
     border-radius: 3px;
     background: palette(base);
-    text-align: center;
-    min-height: 18px;
+    min-height: 16px;
+    max-height: 16px;
 }}
 QProgressBar::chunk {{
     background-color: {colour};
@@ -246,11 +246,27 @@ QProgressBar::chunk {{
 }}
 """
 
+# Meter fill colours: bright enough to stand out on a light or a dark
+# background. Meter readings are shown in labels beside the bars, in the
+# normal text colour, so they never sit on top of these.
 COLOUR_SIGNAL = "#2a78d6"
 COLOUR_GOOD = "#1a9e5f"
-COLOUR_WARN = "#d08a00"
+COLOUR_WARN = "#c98500"
 COLOUR_BAD = "#d03b3b"
-COLOUR_IDLE = "#7d7c78"
+COLOUR_IDLE = "#8a8a8a"
+
+# Badge (background, text) pairs, each with a contrast ratio of at least
+# 4.5:1 (the WCAG level for normal text).
+BADGE_GOOD = ("#157a49", "#ffffff")
+BADGE_WARN = ("#e0a000", "#1a1a1a")
+BADGE_BAD = ("#b8322a", "#ffffff")
+BADGE_IDLE = ("#6b6a66", "#ffffff")
+
+
+def badge_style(colours: Tuple[str, str], selector: str = "QLabel", padding: str = "2px 10px") -> str:
+    background, text = colours
+    return (f"{selector} {{ background: {background}; color: {text}; border-radius: 4px;"
+            f" padding: {padding}; font-weight: bold; }}")
 
 
 class Meter(QProgressBar):
@@ -260,8 +276,8 @@ class Meter(QProgressBar):
     def __init__(self, maximum: int, colour: str, parent=None):
         super().__init__(parent)
         self.setRange(0, maximum)
-        self.setTextVisible(True)
-        self.setMinimumWidth(160)
+        self.setTextVisible(False)
+        self.setMinimumWidth(140)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._colour = None
         self.set_colour(colour)
@@ -270,6 +286,12 @@ class Meter(QProgressBar):
         if colour != self._colour:
             self._colour = colour
             self.setStyleSheet(BAR_STYLE.format(colour=colour))
+
+    def refresh_style(self) -> None:
+        """Re-applies the style sheet, so palette() references in it pick
+        up a new colour scheme."""
+        colour, self._colour = self._colour, None
+        self.set_colour(colour)
 
 
 class Badge(QLabel):
@@ -281,24 +303,115 @@ class Badge(QLabel):
         self.setMinimumWidth(110)
         self._state = None
 
-    def set_state(self, text: str, colour: str, tooltip: str) -> None:
-        if (text, colour) == self._state:
+    def set_state(self, text: str, colours: Tuple[str, str], tooltip: str) -> None:
+        if (text, colours) == self._state:
             return
-        self._state = (text, colour)
+        self._state = (text, colours)
         self.setText(text)
         self.setToolTip(tooltip)
-        self.setStyleSheet(f"QLabel {{ background: {colour}; color: white; border-radius: 4px;"
-                           " padding: 2px 10px; font-weight: bold; }")
+        self.setStyleSheet(badge_style(colours))
+
+
+# ---------------------------------------------------------------------------
+# Colour schemes
+# ---------------------------------------------------------------------------
+#
+# "system" keeps the platform's own style and colours (on Windows 11 this
+# follows the system light/dark setting). "light" and "dark" use Qt's
+# cross-platform Fusion style with the high-contrast palettes below: body
+# text is at least 13:1 against its background, hint text at least 6:1.
+
+COLOUR_SCHEMES = [("system", "System Default"), ("light", "Light"), ("dark", "Dark")]
+
+PALETTES = {
+    "light": dict(window="#f0f0f0", window_text="#000000", base="#ffffff", alternate_base="#f4f4f4",
+                  text="#000000", button="#e3e3e3", button_text="#000000", bright_text="#b8322a",
+                  highlight="#1f5fb4", highlighted_text="#ffffff", link="#0b4fa8",
+                  tooltip_base="#ffffe1", tooltip_text="#000000", light="#ffffff", midlight="#e9e9e9",
+                  mid="#9a9a9a", dark="#7a7a7a", shadow="#4a4a4a", placeholder="#555555",
+                  disabled="#8a8a8a"),
+    "dark": dict(window="#262626", window_text="#f0f0f0", base="#141414", alternate_base="#1e1e1e",
+                 text="#f0f0f0", button="#363636", button_text="#f0f0f0", bright_text="#ff7b72",
+                 highlight="#2f6fc4", highlighted_text="#ffffff", link="#7cb7ff",
+                 tooltip_base="#3a3a3a", tooltip_text="#f0f0f0", light="#4a4a4a", midlight="#3e3e3e",
+                 mid="#5c5c5c", dark="#101010", shadow="#000000", placeholder="#b0b0b0",
+                 disabled="#7a7a7a"),
+}
+
+_ROLE_KEYS = {
+    "Window": "window", "WindowText": "window_text", "Base": "base",
+    "AlternateBase": "alternate_base", "Text": "text", "Button": "button",
+    "ButtonText": "button_text", "BrightText": "bright_text", "Highlight": "highlight",
+    "HighlightedText": "highlighted_text", "Link": "link", "LinkVisited": "link",
+    "ToolTipBase": "tooltip_base", "ToolTipText": "tooltip_text", "Light": "light",
+    "Midlight": "midlight", "Mid": "mid", "Dark": "dark", "Shadow": "shadow",
+    "PlaceholderText": "placeholder",
+}
+
+_system_style_name: Optional[str] = None
+
+
+def build_palette(colours: dict) -> QPalette:
+    palette = QPalette()
+    for role_name, key in _ROLE_KEYS.items():
+        palette.setColor(getattr(QPalette.ColorRole, role_name), QColor(colours[key]))
+    for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(colours["disabled"]))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, QColor(colours["mid"]))
+    return palette
+
+
+def apply_colour_scheme(scheme: str) -> None:
+    global _system_style_name
+    app = QApplication.instance()
+    if _system_style_name is None:
+        _system_style_name = app.style().name()
+    if scheme in PALETTES:
+        QApplication.setStyle("Fusion")
+        QApplication.setPalette(build_palette(PALETTES[scheme]))
+    else:
+        QApplication.setStyle(_system_style_name)
+        QApplication.setPalette(QApplication.style().standardPalette())
+
+
+def make_icon(shape: str, colour: QColor, size: int = 32) -> QIcon:
+    """A plain "play" triangle or "stop" square in the given colour. Qt's
+    built-in media icons are drawn in a fixed dark colour, which almost
+    disappears on a dark background."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(colour)
+    m = size * 0.2
+    if shape == "play":
+        painter.drawPolygon(QPolygonF([QPointF(m * 1.2, m), QPointF(size - m, size / 2),
+                                       QPointF(m * 1.2, size - m)]))
+    else:
+        painter.drawRoundedRect(QRectF(m, m, size - 2 * m, size - 2 * m), 2, 2)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def make_hint(label: QLabel) -> QLabel:
+    """Draws a label in the palette's hint (placeholder) colour, which stays
+    readable in every scheme, unlike the dimmer colour of a disabled
+    widget."""
+    label.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+    return label
 
 
 SYNC_STATES = {
-    "searching": ("Searching", COLOUR_IDLE,
+    "searching": ("Searching", BADGE_IDLE,
                   "No characters are being found: there is no signal, or only noise."),
-    "sync": ("Sync", COLOUR_WARN,
-             "Characters are being found, but no message text yet: usually the phasing "
-             "signal sent between messages, or the start of a message."),
-    "locked": ("Locked", COLOUR_GOOD, "Message text is being decoded."),
-    "stopped": ("Stopped", COLOUR_IDLE, "The decoder is not running."),
+    "sync": ("Sync", BADGE_WARN,
+             "Characters are being found, but no message text is getting through: usually "
+             "the phasing signal sent between messages, or the start of a message."),
+    "data": ("Data", BADGE_GOOD,
+             "Message text is being decoded. On a weak signal some characters may be "
+             "wrong: the Signal bar shows how good reception is."),
+    "stopped": ("Stopped", BADGE_IDLE, "The decoder is not running."),
 }
 
 
@@ -350,6 +463,10 @@ class MainWindow(QMainWindow):
         self.config_path = config_path
         self.settings = QSettings("NavtexDecoder", "NavtexDecoder")
         self.setWindowTitle(APP_NAME)
+        self._scheme = self.settings.value("colour_scheme", "system", type=str)
+        if self._scheme not in dict(COLOUR_SCHEMES):
+            self._scheme = "system"
+        apply_colour_scheme(self._scheme)
 
         self._thread: Optional[DecodeThread] = None
         self._session: Optional[DecodeSession] = None
@@ -398,11 +515,10 @@ class MainWindow(QMainWindow):
     # --- construction ----------------------------------------------------
 
     def _build_actions(self) -> None:
-        style = self.style()
-        self.act_start = QAction(style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay), "Start", self)
+        self.act_start = QAction("Start", self)
         self.act_start.setToolTip("Start decoding with the selected profile")
         self.act_start.triggered.connect(self.start_decoding)
-        self.act_stop = QAction(style.standardIcon(QStyle.StandardPixmap.SP_MediaStop), "Stop", self)
+        self.act_stop = QAction("Stop", self)
         self.act_stop.setToolTip("Stop decoding")
         self.act_stop.triggered.connect(self.stop_decoding)
         self.act_settings = QAction("Settings…", self)
@@ -422,6 +538,16 @@ class MainWindow(QMainWindow):
         self.act_quit.triggered.connect(self.close)
         self.act_about = QAction("About", self)
         self.act_about.triggered.connect(self.show_about)
+        self._update_icons()
+        self.scheme_group = QActionGroup(self)
+        self.scheme_group.setExclusive(True)
+        self.scheme_actions = {}
+        for key, label in COLOUR_SCHEMES:
+            action = QAction(label, self, checkable=True)
+            action.setChecked(key == self._scheme)
+            action.triggered.connect(lambda _checked, k=key: self.set_colour_scheme(k))
+            self.scheme_group.addAction(action)
+            self.scheme_actions[key] = action
 
     def _build_menus(self) -> None:
         bar = self.menuBar()
@@ -435,6 +561,9 @@ class MainWindow(QMainWindow):
         m = bar.addMenu("&View")
         m.addAction(self.act_timestamps)
         m.addAction(self.act_clear)
+        schemes = m.addMenu("Colour Scheme")
+        for key, _label in COLOUR_SCHEMES:
+            schemes.addAction(self.scheme_actions[key])
         m.addSeparator()
         m.addAction(self.act_warnings)
         m = bar.addMenu("&Help")
@@ -478,16 +607,25 @@ class MainWindow(QMainWindow):
             "Keep it in the green, below about -6 dB, and never in the red (clipping).\n"
             "The decoder does not need a loud signal: -30 dB is fine.")
         self.sync_badge = Badge()
+        self.signal_value = QLabel()
+        self.audio_value = QLabel()
+        width = self.fontMetrics().horizontalAdvance("CLIPPING") + 12
+        for label, meter in ((self.signal_value, self.signal_meter), (self.audio_value, self.audio_meter)):
+            label.setMinimumWidth(width)
+            label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            label.setToolTip(meter.toolTip())
 
         meters = QGridLayout()
         meters.setContentsMargins(6, 4, 6, 4)
         meters.addWidget(QLabel("Signal"), 0, 0)
         meters.addWidget(self.signal_meter, 0, 1)
-        meters.addWidget(QLabel("Audio"), 0, 2)
-        meters.addWidget(self.audio_meter, 0, 3)
-        meters.addWidget(self.sync_badge, 0, 4)
+        meters.addWidget(self.signal_value, 0, 2)
+        meters.addWidget(QLabel("Audio"), 0, 3)
+        meters.addWidget(self.audio_meter, 0, 4)
+        meters.addWidget(self.audio_value, 0, 5)
+        meters.addWidget(self.sync_badge, 0, 6)
         meters.setColumnStretch(1, 3)
-        meters.setColumnStretch(3, 2)
+        meters.setColumnStretch(4, 2)
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -704,7 +842,7 @@ class MainWindow(QMainWindow):
         session = self._session
         if session is not None:
             self.signal_meter.setValue(session.tracker.level)
-            self.signal_meter.setFormat(f"{session.tracker.level:02d}")
+            self.signal_value.setText(f"{session.tracker.level:02d}")
             self._show_audio_level(session.audio_level.peak_dbfs, session.audio_level.clipping)
             self.sync_badge.set_state(*SYNC_STATES[session.sync_state])
 
@@ -712,13 +850,13 @@ class MainWindow(QMainWindow):
         self.audio_meter.setValue(int(round(max(0.0, min(60.0, dbfs + 60.0)) * 10)))
         if clipping:
             self.audio_meter.set_colour(COLOUR_BAD)
-            self.audio_meter.setFormat("CLIPPING")
+            self.audio_value.setText("CLIPPING")
         elif dbfs <= -90.0:
             self.audio_meter.set_colour(COLOUR_IDLE)
-            self.audio_meter.setFormat("No audio")
+            self.audio_value.setText("No audio")
         else:
             self.audio_meter.set_colour(COLOUR_WARN if dbfs > -6.0 else COLOUR_GOOD)
-            self.audio_meter.setFormat(f"{dbfs:.0f} dB")
+            self.audio_value.setText(f"{dbfs:.0f} dB")
 
     def _update_elapsed(self) -> None:
         if self.is_running():
@@ -790,8 +928,7 @@ class MainWindow(QMainWindow):
         self._show_in_status_bar(self.warnings_button, n > 0)
         self.warnings_button.setText(f"⚠ {n} warning{'s' if n != 1 else ''}")
         self.warnings_button.setStyleSheet(
-            f"QToolButton {{ color: white; background: {COLOUR_WARN}; border-radius: 3px;"
-            " padding: 0 6px; }" if self._unread_warnings else "")
+            badge_style(BADGE_WARN, "QToolButton", "0 6px") if self._unread_warnings else "")
 
     def show_warnings(self) -> None:
         if self._warnings_dialog is None:
@@ -825,10 +962,10 @@ class MainWindow(QMainWindow):
             self.state_label.setText("Stopped")
             self._show_in_status_bar(self.elapsed_label, False)
             self.signal_meter.setValue(0)
-            self.signal_meter.setFormat("--")
+            self.signal_value.setText("--")
             self.audio_meter.setValue(0)
             self.audio_meter.set_colour(COLOUR_IDLE)
-            self.audio_meter.setFormat("--")
+            self.audio_value.setText("--")
             self.sync_badge.set_state(*SYNC_STATES["stopped"])
             self._update_info_labels()
         self._update_actions()
@@ -882,6 +1019,25 @@ class MainWindow(QMainWindow):
         if profile.db_file:
             tips.append(f"Database: {resolve_path(profile.db_file, base)}")
         self.files_label.setToolTip("\n".join(tips))
+
+    # --- colour scheme ---------------------------------------------------
+
+    def _update_icons(self) -> None:
+        colour = QApplication.palette().color(QPalette.ColorRole.ButtonText)
+        self.act_start.setIcon(make_icon("play", colour))
+        self.act_stop.setIcon(make_icon("stop", colour))
+
+    def set_colour_scheme(self, scheme: str) -> None:
+        self._scheme = scheme
+        self.settings.setValue("colour_scheme", scheme)
+        apply_colour_scheme(scheme)
+        self.scheme_actions[scheme].setChecked(True)
+        # Style sheets that refer to palette() colours are only resolved when
+        # set, so re-apply them for the new palette.
+        self.signal_meter.refresh_style()
+        self.audio_meter.refresh_style()
+        self._update_warnings_button()
+        self._update_icons()
 
     # --- misc ------------------------------------------------------------
 
@@ -973,8 +1129,7 @@ class SettingsDialog(QDialog):
         if problem:
             note = QLabel(f"This profile needs fixing before it can be used:\n{problem}")
             note.setWordWrap(True)
-            note.setStyleSheet(f"QLabel {{ color: white; background: {COLOUR_BAD}; "
-                               "border-radius: 4px; padding: 6px; }")
+            note.setStyleSheet(badge_style(BADGE_BAD, padding="6px").replace(" font-weight: bold;", ""))
             layout.addWidget(note)
         layout.addWidget(tabs)
         layout.addWidget(buttons)
@@ -999,7 +1154,7 @@ class SettingsDialog(QDialog):
         form.addRow("Input device:", row)
         self.device_note = QLabel()
         self.device_note.setWordWrap(True)
-        self.device_note.setStyleSheet(f"color: {COLOUR_BAD};")
+        self.device_note.setStyleSheet(badge_style(BADGE_BAD, padding="4px").replace(" font-weight: bold;", ""))
         self.device_note.hide()
         form.addRow("", self.device_note)
 
@@ -1028,7 +1183,7 @@ class SettingsDialog(QDialog):
 
         self.log_check = QCheckBox("Save decoded text to log files in this folder:")
         self.log_edit = QLineEdit()
-        log_browse = QPushButton("Browse…")
+        self.log_browse = log_browse = QPushButton("Browse…")
         log_browse.clicked.connect(self._browse_log_dir)
         form.addRow(self.log_check)
         row = QHBoxLayout()
@@ -1040,7 +1195,7 @@ class SettingsDialog(QDialog):
 
         self.db_check = QCheckBox("Save decoded lines to this database file:")
         self.db_edit = QLineEdit()
-        db_browse = QPushButton("Browse…")
+        self.db_browse = db_browse = QPushButton("Browse…")
         db_browse.clicked.connect(self._browse_db_file)
         form.addRow(self.db_check)
         row = QHBoxLayout()
@@ -1050,14 +1205,14 @@ class SettingsDialog(QDialog):
         hint = QLabel("Use a file on a local disk, not a network or cloud-synced drive. "
                       "An existing database is added to, not replaced.")
         hint.setWordWrap(True)
-        hint.setEnabled(False)
+        make_hint(hint)
         form.addRow("", hint)
         self.db_check.toggled.connect(self.db_edit.setEnabled)
         self.db_check.toggled.connect(db_browse.setEnabled)
 
         note = QLabel(f"Relative paths are relative to {self.config_path.parent}")
         note.setWordWrap(True)
-        note.setEnabled(False)
+        make_hint(note)
         form.addRow("", note)
         return page
 
@@ -1166,8 +1321,7 @@ class SettingsDialog(QDialog):
             widget.setToolTip(tip)
             name_label = QLabel(label)
             name_label.setToolTip(tip)
-            default = QLabel(f"default {getattr(self.defaults, name)}")
-            default.setEnabled(False)
+            default = make_hint(QLabel(f"default {getattr(self.defaults, name)}"))
             grid.addWidget(name_label, row, 0)
             grid.addWidget(widget, row, 1)
             grid.addWidget(default, row, 2)
@@ -1206,9 +1360,11 @@ class SettingsDialog(QDialog):
         self.log_check.setChecked(bool(p.log_dir))
         self.log_edit.setText(p.log_dir or "")
         self.log_edit.setEnabled(bool(p.log_dir))
+        self.log_browse.setEnabled(bool(p.log_dir))
         self.db_check.setChecked(bool(p.db_file))
         self.db_edit.setText(p.db_file or "")
         self.db_edit.setEnabled(bool(p.db_file))
+        self.db_browse.setEnabled(bool(p.db_file))
         self._fill_devices(p.device)
 
     def _collect(self) -> Profile:
