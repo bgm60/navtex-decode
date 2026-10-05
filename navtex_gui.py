@@ -1,3 +1,7 @@
+# NAVTEX Decoder
+# Copyright (C) 2026 Brian Martlew
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """
 NAVTEX Decoder — Graphical Interface
 ======================================

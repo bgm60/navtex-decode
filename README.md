@@ -156,3 +156,21 @@ decoder runs but produces nothing useful, so set `mark_freq` and
   Arduino CCIR476 library. No code was copied; the transmit behaviour was
   traced and independently reimplemented:
   <https://baltic-lab.com/2022/07/sitor-b-navtex-test-signal-generation/>.
+
+## License
+
+Copyright (C) 2026 Brian Martlew
+
+NAVTEX Decoder is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version.
+
+It is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the [LICENSE](LICENSE) file for the full text
+of the GNU General Public License.
+
+The third-party packages the decoder uses have their own licences, all
+compatible with the GPL v3: numpy, scipy and soundfile (BSD), sounddevice
+and tomlkit (MIT), PyQt6 (GPL v3) and Qt (LGPL v3).
