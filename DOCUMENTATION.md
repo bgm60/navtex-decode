@@ -21,23 +21,31 @@ sound-card input or from a WAV recording, and turns it into decoded text.
 The text is streamed to the console as it arrives and can optionally be
 written to a timestamped log file.
 
-The application has a single entry point, `navtex_decode.py`, and all of
+The command line application has a single entry point, `navtex_decode.py`, and all of
 its settings come from a named profile in a TOML configuration file.
+
+An experimental Qt6 GUI is also available by running `navtex_gui.pi`, it uses
+the same TOML configuration files as the command line version.
 
 ### Files
 
 | File | Role |
 |---|---|
 | `navtex_decode.py` | Command-line front end. |
-| `navtex_config.py` | Loads, type-checks and validates TOML profiles. |
+| `navtex_config.py` | Loads and validates TOML configuration profiles. |
+| `navtex_gui.py`    | A simple, experimental Qt6 interface. |
 | `navtex_session.py` | Builds the pipeline from a profile, opens the audio and runs the decode loop |
-| `navtex_outputs.py` | Formatting and control of decoder output - console, file log & SQL in future |
-| `navtex_step1_sampling_windowing.py` | Audio sources (live device, WAV file) and the windower that produces analysis frames. |
-| `navtex_step2_tone_detection.py` | Measures mark and space tone energy in each frame. |
-| `navtex_step3_bit_sync.py` | Bit-decision data type and the shared state of the bit-clock recovery loop. |
-| `navtex_step4_character_decode.py` | CCIR 476 code tables, character synchronisation, FEC parity locking and character lookup. |
-| `navtex_soft_fec_combine.py` | The live implementations of bit-clock recovery, character grouping and soft-decision FEC combining used by the decoder, plus the top-level decode loop. |
-| `navtex.toml.example` | Example configuration file to copy and edit. |
+| `navtex_outputs.py` | Formatting and control of decoder output - console, file log & SQL |
+| `navtex_step1_sampling_windowing.py` | Audio sources and the frame windower. |
+| `navtex_step2_tone_detection.py` | Mark/space tone detector. |
+| `navtex_step3_bit_sync.py` | Bit-decision type and bit-clock loop state. |
+| `navtex_step4_character_decode.py` | CCIR 476 tables, character sync, FEC parity locking and character lookup. |
+| `navtex_soft_fec_combine.py` | Soft-value bit sync, character grouping and FEC combining, and the decode loop. |
+| `navtex.toml.example` | Example configuration file. |
+| `README.md` | Project description and simple usage instructions |
+| `DOCUMENTATION.md` | Detailed application and configuration documentation. |
+| `requirements.txt` | Python package dependencies. |
+| `Screenshots/` | Application screenshots |
 
 ### Requirements
 
@@ -45,7 +53,8 @@ Python 3.11 or later is required, because profiles are read with the
 standard-library `tomllib` module. The Python packages used are `numpy` and
 `scipy` for signal processing, `soundfile` for reading WAV files, and
 `sounddevice` for live audio capture. `sounddevice` is only needed for live
-mode, and `soundfile` only for file mode.
+mode, and `soundfile` only for file mode. The GUI version also requires `PyQt6`
+and `tomlkit`
 
 ---
 
@@ -365,6 +374,9 @@ on. If that also fails, file logging is switched off for the rest of the
 session and a warning is printed, but decoding and console output
 continue.
 
+If `db_file` is set, a SQLite database is opened (or created if necessary) and
+each line of text is saved as a new record together with the UTC timestamp and
+the signal strength value.
 ---
 
 ## 4. Profile configuration
@@ -387,6 +399,7 @@ particular receiver, decoding recordings, or different signal conditions.
 mode = "live"
 device = 4
 log_dir = "D:/Radio/Logs/518kHz/"
+db_file = "D:/Radio/Logs/db_518kHz.db"
 loop_gain = 0.05
 char_drop_threshold = 0.46
 min_groups_for_acquire = 25

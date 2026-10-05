@@ -4,7 +4,8 @@ A from-scratch software decoder for NAVTEX, the maritime safety broadcast
 service. It takes demodulated audio from a receiver, either live from a
 sound-card input or from a WAV recording, and turns the 100-baud FSK signal
 (CCIR 476 / SITOR-B) into decoded text on the console, with optional
-timestamped logging to a file.
+timestamped logging to a file and/or a SQLite database. A simple GUI is
+also under development.
 
 The decoder uses soft-decision combining of each character's two FEC
 transmissions, self-aligning bit and character synchronisation, and
@@ -38,16 +39,19 @@ stage and of every configuration parameter.
 |---|---|
 | `navtex_decode.py` | Command-line front end. |
 | `navtex_config.py` | Loads and validates TOML configuration profiles. |
+| `navtex_gui.py`    | A simple, experimental Qt6 interface. |
 | `navtex_session.py` | Builds the pipeline from a profile, opens the audio and runs the decode loop |
-| `navtex_outputs.py` | Formatting and control of decoder output - console, file log & SQL in future |
+| `navtex_outputs.py` | Formatting and control of decoder output - console, file log & SQL |
 | `navtex_step1_sampling_windowing.py` | Audio sources and the frame windower. |
 | `navtex_step2_tone_detection.py` | Mark/space tone detector. |
 | `navtex_step3_bit_sync.py` | Bit-decision type and bit-clock loop state. |
 | `navtex_step4_character_decode.py` | CCIR 476 tables, character sync, FEC parity locking and character lookup. |
 | `navtex_soft_fec_combine.py` | Soft-value bit sync, character grouping and FEC combining, and the decode loop. |
 | `navtex.toml.example` | Example configuration file. |
+| `README.md` | Project description and simple usage instructions |
 | `DOCUMENTATION.md` | Detailed application and configuration documentation. |
 | `requirements.txt` | Python package dependencies. |
+| `Screenshots/` | Application screenshots |
 
 ## Requirements
 
@@ -56,6 +60,8 @@ stage and of every configuration parameter.
 - `numpy` and `scipy`.
 - `sounddevice` for live audio input.
 - `soundfile` for WAV file input.
+- `PyQt6` for the GUI version.
+- `tomlkit` for the GUI version.
 
 ## Setup
 
@@ -82,7 +88,8 @@ built-in default. For example:
 [live_518]
 mode = "live"
 device = 4                  # index or part of the device name
-log_dir = "logs/518kHz/"
+log_dir = "logs/518kHz/"    # Location of text log
+db_file = "D:/Radio/Logs/db_518kHz.db"  # Location of SQL database
 
 [recording]
 mode = "file"
@@ -125,6 +132,8 @@ strength reading from 00 to 99:
 ```
 [20260924 13:50:49 85] ZCZC SA02
 ```
+If `db_file` is set, the timestamp, signal strength and text are also
+written to the named SQLite database.
 
 ## Receiver setup
 
