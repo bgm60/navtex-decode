@@ -93,6 +93,7 @@ from PyQt6.QtWidgets import (
 
 from navtex_config import (
     STARTER_CONFIG,
+    TONE_SHIFT,
     ConfigError,
     Profile,
     delete_profile,
@@ -513,8 +514,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, f"Welcome to {APP_NAME}",
                 f"A new profile file has been created:\n{self.config_path}\n\n"
-                "Open Settings to choose your audio input device and the tone "
-                "frequencies your receiver produces, then press Start.")
+                "Open Settings to choose your audio input device and the centre "
+                "frequency of the tones your receiver produces, then press Start.")
 
     # --- construction ----------------------------------------------------
 
@@ -1162,28 +1163,25 @@ class SettingsDialog(QDialog):
         self.device_note.hide()
         form.addRow("", self.device_note)
 
-        self.mark_spin = self._freq_spin()
-        self.space_spin = self._freq_spin()
-        tip = ("The audio frequencies of the two NAVTEX tones as your receiver produces them. "
-               "They depend on the receiver's tuning and mode, not on the NAVTEX standard. "
-               "If nothing decodes, try Swap.")
-        self.mark_spin.setToolTip(tip)
-        self.space_spin.setToolTip(tip)
-        swap = QPushButton("Swap")
-        swap.setToolTip("Swap the mark and space frequencies (if your receiver inverts them)")
-        swap.clicked.connect(self._swap_tones)
+        self.centre_spin = self._freq_spin()
+        self.centre_spin.setToolTip(
+            "The audio frequency midway between the two NAVTEX tones, as your receiver "
+            "produces them. It depends on the receiver's tuning, not on the NAVTEX standard. "
+            "The tones are always 170 Hz apart.")
+        self.invert_check = QCheckBox("Invert tones (mark is the lower tone)")
+        self.invert_check.setToolTip(
+            "Some receivers and modes (for example LSB rather than USB) produce mark as the "
+            "lower tone. If nothing decodes with the right centre frequency, try this.")
         tones = QHBoxLayout()
-        tones.addWidget(QLabel("Mark"))
-        tones.addWidget(self.mark_spin)
-        tones.addWidget(QLabel("Space"))
-        tones.addWidget(self.space_spin)
-        tones.addWidget(swap)
+        tones.addWidget(self.centre_spin)
+        tones.addSpacing(12)
+        tones.addWidget(self.invert_check)
         tones.addStretch()
-        form.addRow("Tone frequencies:", tones)
-        self.tone_note = QLabel()
+        form.addRow("Centre frequency:", tones)
+        self.tone_note = make_hint(QLabel())
         form.addRow("", self.tone_note)
-        self.mark_spin.valueChanged.connect(self._update_tone_note)
-        self.space_spin.valueChanged.connect(self._update_tone_note)
+        self.centre_spin.valueChanged.connect(self._update_tone_note)
+        self.invert_check.toggled.connect(self._update_tone_note)
 
         self.log_check = QCheckBox("Save decoded text to log files in this folder:")
         self.log_edit = QLineEdit()
@@ -1228,18 +1226,11 @@ class SettingsDialog(QDialog):
         spin.setSuffix(" Hz")
         return spin
 
-    def _swap_tones(self) -> None:
-        mark, space = self.mark_spin.value(), self.space_spin.value()
-        self.mark_spin.setValue(space)
-        self.space_spin.setValue(mark)
-
     def _update_tone_note(self) -> None:
-        mark, space = self.mark_spin.value(), self.space_spin.value()
-        shift = abs(mark - space)
-        text = f"Centre {(mark + space) / 2:.0f} Hz, shift {shift:.0f} Hz"
-        if abs(shift - 170) > 10:
-            text += "  (NAVTEX uses a 170 Hz shift)"
-        self.tone_note.setText(text)
+        tones = dataclasses.replace(self.profile, centre_freq=self.centre_spin.value(),
+                                    tones_inverted=self.invert_check.isChecked())
+        self.tone_note.setText(f"Mark {tones.mark_freq:g} Hz, space {tones.space_freq:g} Hz "
+                               f"({TONE_SHIFT:g} Hz shift)")
 
     def _browse_log_dir(self) -> None:
         start = self.log_edit.text() or str(self.config_path.parent)
@@ -1358,8 +1349,8 @@ class SettingsDialog(QDialog):
     def _load_values(self, p: Profile) -> None:
         for name, *_ in ADVANCED_FIELDS:
             self._set_field(name, getattr(p, name))
-        self.mark_spin.setValue(p.mark_freq)
-        self.space_spin.setValue(p.space_freq)
+        self.centre_spin.setValue(p.centre_freq)
+        self.invert_check.setChecked(p.tones_inverted)
         self._update_tone_note()
         self.log_check.setChecked(bool(p.log_dir))
         self.log_edit.setText(p.log_dir or "")
@@ -1386,8 +1377,8 @@ class SettingsDialog(QDialog):
         return dataclasses.replace(
             self.profile, mode="live", wav_file=None,
             device=self._selected_device(),
-            mark_freq=round(self.mark_spin.value(), 1),
-            space_freq=round(self.space_spin.value(), 1),
+            centre_freq=round(self.centre_spin.value(), 1),
+            tones_inverted=self.invert_check.isChecked(),
             log_dir=log_dir or None, db_file=db_file or None,
             **values)
 

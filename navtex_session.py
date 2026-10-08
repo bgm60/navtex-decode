@@ -80,7 +80,7 @@ class SignalStrengthTracker:
     shift slightly with other settings.
     """
 
-    FLOOR = 0.55    # confidence at which decoding fails -> 00
+    FLOOR = 0.50    # confidence at which decoding fails -> 00 (previously 0.55)
     CEILING = 0.92  # confidence of a clean, strong signal -> 99
 
     def __init__(self, window: int = 100):
@@ -185,7 +185,9 @@ def tap_chunks(source: AudioSource, meter: AudioLevelMeter) -> Iterator[np.ndarr
 # ---------------------------------------------------------------------------
 
 def build_config(profile: Profile) -> NavtexConfig:
-    """The audio/tone settings from a profile, as used by Steps 1-3."""
+    """The audio/tone settings from a profile, as used by Steps 1-3. The
+    mark and space frequencies come from the profile's centre_freq and
+    tones_inverted (see Profile.mark_freq and Profile.space_freq)."""
     return NavtexConfig(
         sample_rate=profile.sample_rate,
         oversample=profile.oversample,

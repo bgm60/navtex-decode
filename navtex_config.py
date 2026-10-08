@@ -68,6 +68,19 @@ class ConfigError(Exception):
     """
 
 
+# NAVTEX / SITOR-B frequency shift between the mark and space tones, fixed
+# by the standard (ITU-R M.476-5); not configurable.
+TONE_SHIFT = 170.0
+
+# Keys that older profiles may contain, with what replaced them. They are
+# reported as errors (not converted automatically), naming the new keys.
+_TONES_REPLACED = ("which is no longer used: the tones are now set with centre_freq "
+                   "(the midpoint between mark and space, which are always 170 Hz apart) "
+                   "and tones_inverted (true if mark is the lower tone). "
+                   "Please edit the profile to use those instead.")
+REPLACED_KEYS = {"mark_freq": _TONES_REPLACED, "space_freq": _TONES_REPLACED}
+
+
 @dataclass
 class Profile:
     """One fully-resolved, validated profile. Field defaults below match
@@ -94,8 +107,11 @@ class Profile:
     sample_rate: int = 48000
     oversample: int = 8
     window_type: str = "hamming"
-    mark_freq: float = 1785.0
-    space_freq: float = 1615.0
+    # The two NAVTEX tones are always TONE_SHIFT (170 Hz) apart, so one
+    # centre frequency describes both; tones_inverted says which is
+    # higher. Default: mark 1785 Hz, space 1615 Hz.
+    centre_freq: float = 1700.0     # Hz, midpoint of the two audio tones
+    tones_inverted: bool = False    # True if mark is the LOWER tone
 
     # --- Step 3: bit-clock recovery (BitSync) ---
     loop_gain: float = 0.05
@@ -118,6 +134,18 @@ class Profile:
     # --- Console/log signal-strength reading (SignalStrengthTracker) ---
     signal_strength_window: int = 100
 
+    @property
+    def mark_freq(self) -> float:
+        """Audio frequency of the mark (binary 1) tone, in Hz."""
+        offset = TONE_SHIFT / 2
+        return self.centre_freq - offset if self.tones_inverted else self.centre_freq + offset
+
+    @property
+    def space_freq(self) -> float:
+        """Audio frequency of the space (binary 0) tone, in Hz."""
+        offset = TONE_SHIFT / 2
+        return self.centre_freq + offset if self.tones_inverted else self.centre_freq - offset
+
     def validate(self) -> None:
         """Checks the coupled-parameter relationships documented in
         TUNING_REFERENCE.md's "Coupled parameters" section. Raises
@@ -133,6 +161,16 @@ class Profile:
             raise ConfigError(f"mode must be \"file\" or \"live\", got {self.mode!r}")
         if self.mode == "file" and not self.wav_file:
             raise ConfigError("mode = \"file\" requires wav_file to be set")
+
+        # Both tones must be above 0 Hz and below the Nyquist frequency
+        # (half the sample rate), or the tone detector cannot see them.
+        low, high = self.centre_freq - TONE_SHIFT / 2, self.centre_freq + TONE_SHIFT / 2
+        if low <= 0 or high >= self.sample_rate / 2:
+            raise ConfigError(
+                f"centre_freq ({self.centre_freq:g} Hz) puts the tones at {low:g} and "
+                f"{high:g} Hz; both must be between 0 Hz and half the sample rate "
+                f"({self.sample_rate / 2:g} Hz)."
+            )
 
         # sync_window must comfortably exceed min_groups_for_acquire * 7
         # bits -- "comfortably" interpreted here as "at all", i.e. the
@@ -257,6 +295,8 @@ def load_profile(config_path: str, profile_name: str) -> Profile:
     known_fields = {f.name: resolved_types[f.name] for f in fields(Profile)}
     kwargs: dict = {}
     for key, raw_value in section.items():
+        if key in REPLACED_KEYS:
+            raise ConfigError(f"[{profile_name}] uses {key!r}, {REPLACED_KEYS[key]}")
         if key not in known_fields:
             raise ConfigError(
                 f"[{profile_name}] has unrecognized key {key!r}. "
@@ -363,7 +403,9 @@ def save_profile(config_path: str, name: str, profile: Profile) -> None:
     place (keeping any comment on the same line), keys whose value now
     differs from the built-in default are added (after the section's
     existing keys), and optional keys that are now unset (log_dir,
-    db_file, device...) are removed. `mode` is always written. A key that
+    db_file, device...) are removed, as are keys that have been replaced
+    (REPLACED_KEYS) since the editor has just set their replacements.
+    `mode` is always written. A key that
     is present but equal to its default is left in place, so the file
     never loses something the user wrote deliberately.
     """
@@ -379,6 +421,9 @@ def save_profile(config_path: str, name: str, profile: Profile) -> None:
     else:
         doc[name] = tomlkit.table()
         table = doc[name]
+    for key in REPLACED_KEYS:
+        if key in table:
+            del table[key]
     for f in fields(Profile):
         value = getattr(profile, f.name)
         if value is None:
