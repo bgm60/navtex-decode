@@ -24,7 +24,7 @@ written to a timestamped log file.
 The command line application has a single entry point, `navtex_decode.py`, and all of
 its settings come from a named profile in a TOML configuration file.
 
-An experimental Qt6 GUI is also available by running `navtex_gui.pi`, it uses
+An experimental Qt6 GUI is also available by running `navtex_gui.py`, it uses
 the same TOML configuration files as the command line version.
 
 ### Files

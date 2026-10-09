@@ -78,7 +78,7 @@ WarnFn = Callable[[str], None]
 
 def warn_to_stderr(message: str) -> None:
     """Default warning handler: print to stderr (keeps the CLI's existing
-    behaviour). A GUI would pass its own handler instead."""
+    behaviour). The GUI passes its own handler instead."""
     print(message, file=sys.stderr)
 
 
@@ -349,12 +349,12 @@ class SqliteLogSink(OutputSink):
     unexpectedly; an unfinished last line is saved when the session
     closes.
 
-    The database uses WAL journal mode, which lets other programs (or a
-    future GUI) read it while the decoder is writing. WAL needs the
-    database to be on a local disk: on a network or cloud-synced drive
-    SQLite may refuse WAL (a warning is printed and the default mode is
-    used) or, worse, behave unreliably, so a local path is strongly
-    recommended.
+    The database uses WAL journal mode, lets other programs read it while
+	the decoder is writing.
+	WAL needs the database to be on a local disk: on a network or
+	cloud-synced drive SQLite may refuse WAL (a warning is printed and
+	the default mode is used) or, worse, behave unreliably, so a local
+	path is strongly recommended.
 
     On a database error, the connection is closed and reopened once and
     the failed row retried. If that also fails, database logging is
