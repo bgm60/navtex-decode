@@ -10,7 +10,7 @@ Builds the Step 1-4 decoding pipeline from a profile and runs it,
 delivering decoded text to a set of output sinks (see navtex_outputs.py).
 
 This is the part of the application shared by every front end: the
-command-line tool (navtex_decode.py) and, in future, the GUI. It has no
+command-line tool (navtex_decode.py) and the GUI. It has no
 knowledge of the console, argument parsing or Ctrl+C.
 
 Typical use:

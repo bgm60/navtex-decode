@@ -8,10 +8,9 @@ NAVTEX Decoder — Line Assembly and Output Sinks
 
 Decoded text leaves the pipeline one character at a time. This module
 turns that character stream into line events and delivers them to any
-number of output "sinks" (console, text log file, and in future a
-database or GUI window), so that line-boundary handling, timestamps and
-signal-strength readings are worked out once, in one place, rather than
-separately by every output.
+number of output "sinks" (console, text log file, database or GUI window),
+so that line-boundary handling, timestamps and signal-strength readings
+are worked out once, in one place, rather than separately by every output.
 
     decoded characters
             |
