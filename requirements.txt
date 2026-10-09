@@ -9,3 +9,6 @@ soundfile
 # Graphical interface (navtex_gui.py only; not needed for the command-line tool)
 PyQt6
 tomlkit
+
+# Test Harness
+pytest
