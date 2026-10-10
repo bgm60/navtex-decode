@@ -72,6 +72,11 @@ class ConfigError(Exception):
 # by the standard (ITU-R M.476-5); not configurable.
 TONE_SHIFT = 170.0
 
+# Valid values of Profile.weak_signal_lock. Kept here (not imported from
+# navtex_soft_lock) so reading a config needs no numerical libraries; a test
+# checks the two lists agree.
+WEAK_SIGNAL_LOCK_CHOICES = ("off", "conservative", "normal", "sensitive")
+
 # Keys that older profiles may contain, with what replaced them. They are
 # reported as errors (not converted automatically), naming the new keys.
 _TONES_REPLACED = ("which is no longer used: the tones are now set with centre_freq "
@@ -112,6 +117,14 @@ class Profile:
     # higher. Default: mark 1785 Hz, space 1615 Hz.
     centre_freq: float = 1700.0     # Hz, midpoint of the two audio tones
     tones_inverted: bool = False    # True if mark is the LOWER tone
+
+    # --- Weak-signal lock (navtex_soft_lock.py) ---
+    # "off" uses the character-sync and FEC parity locks below. Any other
+    # value replaces both with the soft-evidence lock, which decodes much
+    # weaker signals; the value sets how readily it locks (see
+    # navtex_soft_lock.LEVELS). While it is on, the 11 character-sync and
+    # FEC-lock settings below are ignored.
+    weak_signal_lock: str = "off"   # "off", "conservative", "normal" or "sensitive"
 
     # --- Step 3: bit-clock recovery (BitSync) ---
     loop_gain: float = 0.05
@@ -161,6 +174,11 @@ class Profile:
             raise ConfigError(f"mode must be \"file\" or \"live\", got {self.mode!r}")
         if self.mode == "file" and not self.wav_file:
             raise ConfigError("mode = \"file\" requires wav_file to be set")
+        if self.weak_signal_lock not in WEAK_SIGNAL_LOCK_CHOICES:
+            raise ConfigError(
+                f"weak_signal_lock must be one of "
+                f"{', '.join(repr(c) for c in WEAK_SIGNAL_LOCK_CHOICES)}, "
+                f"got {self.weak_signal_lock!r}")
 
         # Both tones must be above 0 Hz and below the Nyquist frequency
         # (half the sample rate), or the tone detector cannot see them.
@@ -180,6 +198,10 @@ class Profile:
         # not on thin-but-valid margins -- it's not this validator's job
         # to second-guess how much margin is "enough", only to catch a
         # configuration that cannot work at all.
+        # The settings checked below belong to the character-sync and FEC
+        # locks, which weak_signal_lock replaces; they are ignored then.
+        if self.weak_signal_lock != "off":
+            return
         min_bits = self.min_groups_for_acquire * 7
         if self.sync_window <= min_bits:
             raise ConfigError(

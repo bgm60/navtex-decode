@@ -48,6 +48,7 @@ from navtex_soft_fec_combine import (
     SoftFecCombiner,
     decode_bit_stream_soft,
 )
+from navtex_soft_lock import SoftLockDecoder, SoftLockParams
 from navtex_step1_sampling_windowing import (
     AudioSource,
     FileSource,
@@ -243,25 +244,39 @@ def build_fec(profile: Profile) -> SoftFecCombiner:
     )
 
 
+def weak_signal_lock_enabled(profile: Profile) -> bool:
+    return profile.weak_signal_lock != "off"
+
+
+def build_soft_lock(profile: Profile) -> SoftLockDecoder:
+    """The weak-signal lock for a profile whose weak_signal_lock is not
+    "off". See navtex_soft_lock."""
+    return SoftLockDecoder(SoftLockParams.for_level(profile.weak_signal_lock))
+
+
 def decode_characters(source: AudioSource, profile: Profile,
                       tracker: SignalStrengthTracker,
                       grouper: Optional[SoftCharacterGrouper] = None,
                       fec: Optional[SoftFecCombiner] = None,
                       audio_level: Optional[AudioLevelMeter] = None,
                       bit_hook: Optional[Callable[[], None]] = None,
-                      hook_every: int = 50) -> Iterator[str]:
+                      hook_every: int = 50,
+                      soft_lock: Optional[SoftLockDecoder] = None) -> Iterator[str]:
     """The full Step 1-4 pipeline: audio in, decoded characters out.
     Updates `tracker` with every bit decision along the way, and
     `audio_level` (if given) with every audio chunk, and calls `bit_hook`
     (if given) every `hook_every` bits. `grouper` and `fec` are built from
     the profile unless supplied (DecodeSession supplies its own so it can
-    report their status)."""
+    report their status). If the profile's weak_signal_lock is not "off",
+    `soft_lock` (built from the profile unless supplied) replaces both."""
     config = build_config(profile)
     windower = Windower(config)
     detector = ToneDetector(config)
     bitsync = SoftBitSync(config, loop_gain=profile.loop_gain)
-    grouper = grouper if grouper is not None else build_grouper(profile)
-    fec = fec if fec is not None else build_fec(profile)
+    use_soft_lock = weak_signal_lock_enabled(profile)
+    if not use_soft_lock:
+        grouper = grouper if grouper is not None else build_grouper(profile)
+        fec = fec if fec is not None else build_fec(profile)
     if audio_level is None:
         frames = windower.frames(source)
     else:
@@ -271,6 +286,9 @@ def decode_characters(source: AudioSource, profile: Profile,
         bitsync.process_stream(detector.process_stream(frames)),
         tracker, hook=bit_hook, every=hook_every,
     )
+    if use_soft_lock:
+        soft_lock = soft_lock if soft_lock is not None else build_soft_lock(profile)
+        return soft_lock.decode(bit_decisions)
     return decode_bit_stream_soft(bit_decisions, grouper=grouper, fec=fec,
                                   phasing_burst_threshold=profile.phasing_burst_threshold)
 
@@ -295,7 +313,9 @@ class DecodeSession:
         "data"       message text is being decoded. On a weak signal
                      some characters may be wrong; the signal-strength
                      reading says how good reception is.
-    It is refreshed about twice a second of audio.
+    It is refreshed about twice a second of audio. With weak_signal_lock
+    on, the state is "data" while the lock is held and "searching" otherwise
+    ("sync" does not occur).
 
     "data" means the character alignment is held and the locked DX/RX
     parity's recent match rate is at least DATA_MIN_MATCH_RATE. Measured
@@ -316,6 +336,7 @@ class DecodeSession:
         self.tracker = SignalStrengthTracker(window=profile.signal_strength_window)
         self.audio_level = AudioLevelMeter()
         self.sync_state = "searching"
+        self._soft_lock = build_soft_lock(profile) if weak_signal_lock_enabled(profile) else None
         self._grouper = build_grouper(profile)
         self._fec = build_fec(profile)
         self._sinks = list(sinks)
@@ -327,6 +348,7 @@ class DecodeSession:
         try:
             for ch in decode_characters(self.source, self.profile, self.tracker,
                                         grouper=self._grouper, fec=self._fec,
+                                        soft_lock=self._soft_lock,
                                         audio_level=self.audio_level,
                                         bit_hook=self._update_sync_state,
                                         hook_every=self.SYNC_CHECK_BITS):
@@ -341,6 +363,10 @@ class DecodeSession:
     def _update_sync_state(self) -> None:
         # Runs on the decoding thread (the only thread that touches the
         # grouper and combiner), called from the bit-decision tap.
+        if self._soft_lock is not None:
+            # "data" while the weak-signal lock holds a lock, else "searching"
+            self.sync_state = self._soft_lock.state
+            return
         rate = self._fec.match_rate()
         if (self._grouper.is_aligned() and rate is not None
                 and rate >= self.DATA_MIN_MATCH_RATE):

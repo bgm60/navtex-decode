@@ -47,6 +47,9 @@ stage and of every configuration parameter.
 | `navtex_step3_bit_sync.py` | Bit-decision type and bit-clock loop state. |
 | `navtex_step4_character_decode.py` | CCIR 476 tables, character sync, FEC parity locking and character lookup. |
 | `navtex_soft_fec_combine.py` | Soft-value bit sync, character grouping and FEC combining, and the decode loop. |
+| `navtex_soft_lock.py` | Weak-signal lock: finds character alignment and DX/RX parity from soft evidence (`weak_signal_lock`). |
+| `navtex_bench.py` | Synthetic-signal benchmark for measuring decoder recovery against SNR. |
+| `navtex_synth.py` | Synthetic NAVTEX signal and channel generator. |
 | `navtex.toml.example` | Example configuration file. |
 | `README.md` | Project description and simple usage instructions |
 | `DOCUMENTATION.md` | Detailed application and configuration documentation. |
@@ -134,6 +137,19 @@ strength reading from 00 to 99:
 ```
 If `db_file` is set, the timestamp, signal strength and text are also
 written to the named SQLite database.
+
+### Weak-signal lock
+
+For very weak or fading signals set `weak_signal_lock` to `"conservative"`,
+`"normal"` or `"sensitive"` (default `"off"`). The decoder then finds
+character alignment and DX/RX parity by comparing each group of bits with
+the group five slots earlier, instead of the standard synchronisation and
+FEC locking. In synthetic tests it recovers 10% of characters at about
+-13 dB SNR, against about -8 dB for the standard decoder. Text appears
+about 2 s after it was received, and some garbage characters are normal at
+the edge of reception. With the lock on, the character-sync and FEC
+settings are ignored (the GUI greys them out). Higher sensitivity locks on
+earlier but gives more false locks on noise.
 
 ## Receiver setup
 

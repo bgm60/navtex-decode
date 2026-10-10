@@ -429,15 +429,50 @@ decoder with a clear error message rather than a traceback:
   parameters (`loop_gain = 0` is fine), but `true`/`false` are never
   accepted as numbers or the other way round.
 - `mode` must be `"file"` or `"live"`, and file mode requires `wav_file`.
+- `weak_signal_lock` must be one of `"off"`, `"conservative"`, `"normal"`
+  or `"sensitive"`.
 - `sync_window` must be greater than `min_groups_for_acquire × 7`,
   otherwise character synchronisation could never collect enough groups
   to acquire.
 - `rate_window` must be at least `min_samples_for_rate`, otherwise the FEC
   combiner could never collect enough results to lock.
+- The last two checks are skipped while `weak_signal_lock` is on, because
+  those settings are then not used.
 
 ---
 
 ## 5. Configuration parameters
+
+### 5.0 Weak-signal lock
+
+| Parameter | Default | Description |
+|---|---|---|
+| `weak_signal_lock` | `"off"` | `"off"`, `"conservative"`, `"normal"` or `"sensitive"`. |
+
+SITOR-B sends every character twice, five slots apart. The weak-signal
+lock exploits this: for each of 14 hypotheses (7 bit phases times the two
+possible DX/RX parities) it scores how well each group of 7 bits matches
+the group five slots earlier, adds the scores over a 6.3 s window, and
+locks when one hypothesis is clearly the best. The soft history is kept,
+so the text received while the lock was being found is decoded too. The
+lock is released when the signal stops matching, and a 2 s output delay
+keeps the garbage at the end of a transmission out of the output.
+
+The levels set how much evidence is required before locking:
+
+| Level | Threshold z* | False locks on noise |
+|---|---|---|
+| `sensitive` | 3.5 | about 1.8 per hour |
+| `normal` | 4.0 | about 0.3 per hour |
+| `conservative` | 5.0 | none seen in 24 h of noise |
+
+While the lock is on, these settings are ignored: `sync_window`,
+`min_groups_for_acquire`, `char_acquire_threshold`, `char_drop_threshold`,
+`char_switch_margin`, `fec_acquire_threshold`, `fec_switch_margin`,
+`min_samples_for_rate`, `rate_window`, `lock_window` and
+`phasing_burst_threshold`. The status badge shows "Locked" while a lock is
+held and "Searching" otherwise. The lock needs the tuning to be within
+about 50 Hz of the signal.
 
 ### 5.1 Input source and logging
 
