@@ -11,6 +11,8 @@ Two kinds of test live here:
   the noise calibration, the fading envelope, and agreement between the
   decoder's raw bit error rate and the theoretical curve. If one of these
   fails, the benchmark numbers cannot be trusted.
+* Checks on the position-matched scorer (visible_truth, the tagged copy of
+  the decoder pipeline, the forced-synchronisation oracle, crossing).
 * Decoder regression checks: clean and moderately noisy transmissions must
   decode perfectly. These are deliberately generous, so they catch breakage
   rather than small changes in sensitivity (the sweep reports those).
@@ -26,7 +28,9 @@ import numpy as np
 import pytest
 from scipy.signal import welch
 
-from navtex_bench import (TrialSpec, align_score, measure_raw_ber, run_trial)
+from navtex_bench import (CHANCE_OFFSETS, TrialSpec, align_score, crossing, estimate_slot_starts,
+                          front_end_decisions, measure_raw_ber, positional_score, positional_scores,
+                          run_trial, sent_slots, visible_truth)
 from navtex_config import Profile
 from navtex_synth import (
     FIGS,
@@ -184,3 +188,89 @@ def test_nothing_decodes_from_noise_alone_with_a_valid_message_header():
     noise = apply_channel(np.zeros(n), 48000, 0.005, Channel(snr_db=0.0, seed=9))
     from navtex_bench import run_decoder
     assert "ZCZC" not in run_decoder(noise, PROFILE).text
+
+
+# ---------------------------------------------------------------------------
+# Position-matched scoring
+# ---------------------------------------------------------------------------
+
+def _tx_and_audio(message: str, snr_db, seed: int = 1):
+    tx = build_transmission(message)
+    audio = apply_channel(tx.audio, tx.sample_rate, tx.signal_power, Channel(snr_db=snr_db, seed=seed))
+    return tx, audio
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_visible_truth_is_every_non_whitespace_character_in_order(seed):
+    message = (STANDARD_MESSAGES[seed] if seed < len(STANDARD_MESSAGES)
+               else random_message(np.random.default_rng(seed)))
+    visible = visible_truth(sent_slots(build_transmission(message)))
+    assert "".join(c for _, c in visible) == "".join(message.split())
+    assert all(s % 2 == 1 for s, _ in visible)                    # always an RX slot
+    assert [s for s, _ in visible] == sorted({s for s, _ in visible})
+
+
+def test_slot_starts_are_regular_on_a_clean_signal():
+    tx, audio = _tx_and_audio(STANDARD_MESSAGES[0], None)
+    lead_bits = int(round(tx.bits_start_s * 100))
+    starts = estimate_slot_starts(front_end_decisions(audio, PROFILE), tx, lead_bits)
+    assert len(starts) == len(tx.bits) // 7
+    assert set(np.diff(starts).tolist()) == {7}
+    assert abs(int(starts[0]) - lead_bits) <= 6
+
+
+def test_positional_score_counts_hits_header_and_chance():
+    visible = [(5 + 2 * i, ch) for i, ch in enumerate("ZCZCGA86AB")]
+    out = {5: "Z", 7: "C", 9: "Z", 11: "X",                       # three right, one wrong
+           25: "Z"}                                               # a coincidence, 20 slots after slot 5
+    score = positional_score(out, visible)
+    assert (score.hits, score.n) == (3, 10)
+    assert (score.hdr, score.hdr_n) == (3, 8)
+    assert score.chance == 1 and score.chance_n == 10 * len(CHANCE_OFFSETS)
+    assert math.isclose(score.recovery, 0.3)
+
+
+def test_crossing_interpolates_and_reports_the_edges():
+    snrs = [-10.0, -8.0, -6.0]
+    assert crossing(snrs, [0.0, 20.0, 100.0], 10.0) == pytest.approx(-9.0)
+    assert crossing(snrs, [0.0, 20.0, 100.0], 60.0) == pytest.approx(-7.0)
+    assert crossing(snrs, [30.0, 40.0, 50.0], 10.0) == -math.inf     # crossing is below the range
+    assert crossing(snrs, [0.0, 1.0, 2.0], 50.0) is None            # never reached
+
+
+@pytest.mark.parametrize("snr_db, seed", [(None, 1), (-6.0, 2), (-7.5, 3), (-8.5, 4)])
+def test_tagged_pipeline_reproduces_the_production_decoder(snr_db, seed):
+    """The scorer replays a copy of decode_bit_stream_soft; if the decoder
+    changes and the copy does not, this fails (verify=True raises)."""
+    tx, audio = _tx_and_audio(STANDARD_MESSAGES[1], snr_db, seed)
+    positional_scores(tx, audio, PROFILE, verify=True)
+
+
+def test_noiseless_recovery_is_complete_for_every_variant():
+    tx, audio = _tx_and_audio(STANDARD_MESSAGES[0], None)
+    scores = positional_scores(tx, audio, PROFILE, oracle=True)
+    for variant in ("P", "A", "B"):
+        assert scores[variant].recovery == 1.0
+        assert scores[variant].hdr == scores[variant].hdr_n == 8
+    assert scores["P"].chance / scores["P"].chance_n < 0.1
+
+
+def test_forced_synchronisation_reaches_where_the_production_lock_cannot():
+    """At -10 dB the production DX/RX parity lock fails but the soft
+    combiner can still read the text when told the parity (the harness's
+    headroom finding). This pins that the oracle really is a ceiling."""
+    tx, audio = _tx_and_audio(STANDARD_MESSAGES[1], -10.0, seed=5)
+    scores = positional_scores(tx, audio, PROFILE, oracle=True)
+    assert scores["P"].recovery < 0.05
+    assert scores["B"].recovery > 0.25
+    assert scores["B"].recovery >= scores["A"].recovery >= scores["P"].recovery - 0.02
+
+
+def test_header_recovery_is_reported_on_noise_only_audio_as_zero():
+    n = 48000 * 40
+    noise = apply_channel(np.zeros(n), 48000, 0.005, Channel(snr_db=0.0, seed=3))
+    tx = build_transmission(STANDARD_MESSAGES[0])
+    audio = np.zeros(len(tx.audio), dtype=np.float32)
+    audio[:] = noise[:len(audio)]
+    scores = positional_scores(tx, audio, PROFILE)
+    assert scores["P"].hits <= 3 and scores["P"].hdr == 0
