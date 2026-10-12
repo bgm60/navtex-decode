@@ -454,8 +454,12 @@ lock exploits this: for each of 14 hypotheses (7 bit phases times the two
 possible DX/RX parities) it scores how well each group of 7 bits matches
 the group five slots earlier, adds the scores over a 6.3 s window, and
 locks when one hypothesis is clearly the best. The soft history is kept,
-so the text received while the lock was being found is decoded too. The
-lock is released when the signal stops matching, and a 2 s output delay
+so the text received while the lock was being found is decoded too. While locked, the lock keeps comparing all 14 hypotheses. If a one-bit
+slip in the bit clock moves the signal to a neighbouring alignment, or a
+second station clearly takes over, the lock moves to the new alignment
+instead of printing garbage; two stations of similar strength do not make
+it flip between them. The lock is released when the signal stops
+matching, and a 2 s output delay
 keeps the garbage at the end of a transmission out of the output.
 
 The levels set how much evidence is required before locking:

@@ -21,6 +21,7 @@ Run from the project folder:    python -m pytest test_soft_lock.py
 from __future__ import annotations
 
 import dataclasses
+import difflib
 
 import numpy as np
 import pytest
@@ -243,3 +244,87 @@ def test_default_profile_still_uses_the_standard_decoder():
     assert "ZCZC" in text
     assert BINS_PER_STEP == 14
     assert build_soft_lock(soft_profile("sensitive")).params.z_star == LEVELS["sensitive"]
+
+
+# ---------------------------------------------------------------------------
+# Following: bit slips and a second station
+# ---------------------------------------------------------------------------
+
+def _decode(decisions, params=None):
+    decoder = SoftLockDecoder(params or SoftLockParams())
+    events = []
+    for bd in decisions:
+        events.extend(decoder.push(bd.soft_value))
+    events.extend(decoder.finish())
+    return events, decoder
+
+
+def _text(events):
+    return "".join(ch for ch, _ in events)
+
+
+@pytest.mark.parametrize("snr", [0.0, -6.0])
+@pytest.mark.parametrize("slip", ["drop", "duplicate"])
+def test_a_one_bit_slip_inside_a_lock_is_followed(snr, slip):
+    tx = transmission(seed=12, n_lines=6)
+    audio = apply_channel(tx.audio, FS, tx.signal_power, Channel(snr_db=snr, seed=7))
+    decisions = front_end_decisions(audio, PROFILE)
+    reference = _text(_decode(decisions)[0])
+    middle = int(round(tx.bits_start_s * 100)) + len(tx.bits) // 2
+    slipped = list(decisions)
+    if slip == "drop":
+        del slipped[middle]
+    else:
+        slipped.insert(middle, slipped[middle])
+    events, decoder = _decode(slipped)
+    kept = sum(b.size for b in difflib.SequenceMatcher(None, reference, _text(events),
+                                                       autojunk=False).get_matching_blocks())
+    assert decoder.switches == 1
+    assert kept > 0.95 * len(reference)
+    off_events, off_decoder = _decode(slipped, SoftLockParams(follow=False))
+    assert off_decoder.switches == 0
+    off_kept = sum(b.size for b in difflib.SequenceMatcher(None, reference, _text(off_events),
+                                                           autojunk=False).get_matching_blocks())
+    assert off_kept < 0.7 * len(reference)             # without following the rest is lost
+
+
+def _two_stations(gain_b_db, overlap_s, snr, seeds=(31, 32)):
+    a = transmission(seed=seeds[0], n_lines=4)
+    b = transmission(seed=seeds[1], n_lines=4)
+    start_b = int(len(a.audio) - overlap_s * FS) + 503              # an odd bit phase
+    n = max(len(a.audio), start_b + len(b.audio)) + 5 * FS
+    x = np.zeros(n)
+    x[:len(a.audio)] += a.audio
+    x[start_b:start_b + len(b.audio)] += 10 ** (gain_b_db / 20) * b.audio
+    audio = apply_channel(x, FS, a.signal_power, Channel(snr_db=snr, seed=1))
+    return a, b, front_end_decisions(audio, PROFILE), int(round(start_b / (FS / 100.0)))
+
+
+@pytest.mark.parametrize("gain_db", [0, 5, 10])
+def test_a_second_station_that_is_as_strong_takes_over_when_the_first_ends(gain_db):
+    a, b, decisions, base_b = _two_stations(gain_db, overlap_s=10, snr=-4.0)
+    events, decoder = _decode(decisions)
+    score_b = recovered(events, b, decisions, base_b)
+    assert score_b.hits / score_b.n > 0.9
+    assert decoder.switches >= 1 or gain_db == 10                    # a stronger B wins without needing a switch
+    off_events, _ = _decode(decisions, SoftLockParams(follow=False))
+    score_a = recovered(events, a, decisions, 0)
+    score_a_off = recovered(off_events, a, decisions, 0)
+    assert score_a.hits >= score_a_off.hits - 3                      # the first station is not sacrificed
+
+
+def test_a_much_weaker_second_station_does_not_disturb_the_first():
+    a, b, decisions, _ = _two_stations(-10, overlap_s=10, snr=-4.0)
+    events, decoder = _decode(decisions)
+    score_a = recovered(events, a, decisions, 0)
+    assert score_a.hits / score_a.n > 0.95
+    assert decoder.switches == 0
+
+
+def test_following_makes_no_difference_to_a_single_signal_without_slips():
+    tx = transmission(seed=41, n_lines=4)
+    audio = apply_channel(tx.audio, FS, tx.signal_power, Channel(snr_db=-9.0, seed=8))
+    decisions = front_end_decisions(audio, PROFILE)
+    on, decoder = _decode(decisions)
+    off, _ = _decode(decisions, SoftLockParams(follow=False))
+    assert on == off and decoder.switches == 0

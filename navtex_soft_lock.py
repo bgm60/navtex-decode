@@ -53,11 +53,25 @@ parity (which slots are the repeats). That is 7 x 2 = 14 hypotheses.
    that decode after a message ends can be discarded when the release
    decision comes.
 
+7. Following. A lock can be lost without the signal going away: a bit
+   slipped in the bit-clock recovery after a burst of noise or a deep fade,
+   or a second station took over. While locked, every hypothesis keeps
+   being scored over a short `switch_window`. If another alignment is
+   clearly ahead of the locked one (above a threshold, by a margin, for
+   `switch_hold` comparisons in a row) the lock moves to it. The point at
+   which the signal changed is found by choosing the split that best
+   explains the stored scores; characters decoded under the old alignment
+   after that point are dropped and decoding continues under the new one.
+   A one-bit-slip neighbour needs less evidence than an unrelated
+   alignment, and two stations of similar strength do not make the lock
+   flip between them, because the margin is not met while both score well.
+   As a last resort the lock is released if its own alignment has scored
+   low for a long time.
+
 Units: one *comparison* is two character slots, 14 bit decisions, 0.14 s.
 
-Not included, deliberately: tracking of bit-clock slips inside a lock
-(it made false slip decisions on synthetic signals, which rarely slip) and
-any guard against a steady carrier (judged unlikely in real use).
+Not included, deliberately: any guard against a steady carrier (judged
+unlikely in real use).
 """
 
 from __future__ import annotations
@@ -102,6 +116,14 @@ class SoftLockParams:
     release_hold: int = 5             # consecutive low comparisons
     output_delay: int = 15            # comparisons (see module docstring)
     replay_margin: int = 10           # comparisons before the window start
+    follow: bool = True               # move the lock to a clearly better alignment
+    switch_window: int = 12           # comparisons used to compare alignments
+    slip_z: float = 4.0               # challenger z needed: one-bit-slip neighbour
+    slip_margin: float = 2.0          # ... and its lead over the locked alignment
+    switch_z: float = 5.0             # challenger z needed: unrelated alignment
+    switch_margin: float = 3.0        # ... and its lead
+    switch_hold: int = 3              # consecutive comparisons the rule must hold
+    own_release_hold: int = 25        # release if the locked alignment alone stays low
 
     @classmethod
     def for_level(cls, level: str) -> "SoftLockParams":
@@ -138,6 +160,7 @@ def _slip_neighbours(h: int) -> Tuple[int, int]:
 _PHI = np.repeat(np.arange(7), 2)            # bit phase of each hypothesis
 _PAR = np.tile(np.arange(2), 7)              # parity of the repeat (RX) group
 _LAST = 55                                   # decisions after 14*bin by which all 14 entries exist
+SPLIT_OFFSET = 35                            # decisions: a comparison bin looks 5 slots ahead
 _BUFFER_MAX = 6000                           # decisions of soft history kept (trimmed to half)
 
 
@@ -165,6 +188,10 @@ class SoftLockDecoder:
         self._h = 0
         self._neighbours: Tuple[int, int] = (0, 0)
         self._low_run = 0
+        self._own_low_run = 0
+        self._challenge_run = 0
+        self._dwell = 0              # comparisons since the lock last started or moved
+        self.switches = 0            # times the lock has moved to another alignment
         self._prev_end = 0           # decisions before this belong to a finished lock
         self._fec: Optional[SoftFecCombiner] = None
         self._p0 = 0
@@ -248,6 +275,9 @@ class SoftLockDecoder:
         self._h = h
         self._neighbours = _slip_neighbours(h)
         self._low_run = 0
+        self._own_low_run = 0
+        self._challenge_run = 0
+        self._dwell = 0
         self._fec = SoftFecCombiner()
         phi = int(_PHI[h])
         m0 = max((b - p.window + 1 - p.replay_margin) * BINS_PER_STEP,
@@ -280,16 +310,73 @@ class SoftLockDecoder:
 
     def _maybe_release(self, b: int) -> Iterator[Tuple[str, int]]:
         p = self.params
+        if p.follow:
+            self._maybe_switch(b)
         limit = BINS_PER_STEP * (b - p.output_delay) + BINS_PER_STEP
         recent = np.sum(list(self._hist)[-p.release_window:], axis=0)
         z = recent / (p.score_sd * math.sqrt(p.release_window))
         best = max(z[self._h], z[self._neighbours[0]], z[self._neighbours[1]])
         self._low_run = self._low_run + 1 if best < p.release_z else 0
+        self._own_low_run = self._own_low_run + 1 if z[self._h] < p.release_z else 0
         while self._pending and self._pending[0][0] <= limit:
             _, ch, pos = self._pending.popleft()
             yield ch, pos
-        if self._low_run >= p.release_hold:
+        if self._low_run >= p.release_hold or (p.follow and self._own_low_run >= p.own_release_hold):
             self._pending.clear()                     # what is left is the stray tail
             self._locked = False
             self._prev_end = max(self._prev_end, limit)
             self._hist.clear()                        # start again from empty
+
+    def _maybe_switch(self, b: int) -> None:
+        """Moves the lock to another alignment that is clearly better."""
+        p = self.params
+        s = p.switch_window
+        self._dwell += 1
+        if len(self._hist) < s or self._dwell < s:
+            self._challenge_run = 0
+            return
+        z = np.sum(list(self._hist)[-s:], axis=0) / (p.score_sd * math.sqrt(s))
+        c = int(np.argmax(z))
+        if c == self._h:
+            self._challenge_run = 0
+            return
+        near = c in self._neighbours
+        need_z, need_margin = (p.slip_z, p.slip_margin) if near else (p.switch_z, p.switch_margin)
+        if z[c] >= need_z and z[c] - z[self._h] >= need_margin:
+            self._challenge_run += 1
+        else:
+            self._challenge_run = 0
+        if self._challenge_run >= p.switch_hold:
+            self._switch(c, b, near)
+
+    def _switch(self, c: int, b: int, near: bool) -> None:
+        """Re-aligns to hypothesis c from the point where the stored scores
+        say the signal changed from the old alignment to the new one."""
+        p = self.params
+        hist = np.array(list(self._hist))                     # (m, 14), oldest first
+        m = len(hist)
+        old = np.concatenate(([0.0], np.cumsum(hist[:, self._h])))
+        new = np.concatenate(([0.0], np.cumsum(hist[:, c])))
+        k = int(np.argmax(old + (new[-1] - new)))             # comparisons that still belong to the old alignment
+        cut = BINS_PER_STEP * (b - m + 1 + k) + SPLIT_OFFSET
+        cut = max(cut, self._base)
+        kept = deque(item for item in self._pending if item[0] <= cut)
+        self._pending = kept
+        self._h = c
+        self._neighbours = _slip_neighbours(c)
+        if not near:
+            self._fec = SoftFecCombiner()
+        phi = int(_PHI[c])
+        self._i0 = max(0, -(-(cut - phi) // 7))
+        self._p0 = phi + 7 * self._i0
+        while self._p0 < self._base:
+            self._i0 += 1
+            self._p0 += 7
+        self._t = 0
+        self._recent.clear()
+        self._low_run = 0
+        self._own_low_run = 0
+        self._challenge_run = 0
+        self._dwell = 0
+        self.switches += 1
+        self._advance_groups()
