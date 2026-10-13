@@ -345,6 +345,7 @@ class DecodeSession:
     def run(self) -> None:
         assembler = LineAssembler(self._sinks, strength=self._strength,
                                   warn=self._warn)
+        releases = 0
         try:
             for ch in decode_characters(self.source, self.profile, self.tracker,
                                         grouper=self._grouper, fec=self._fec,
@@ -352,6 +353,11 @@ class DecodeSession:
                                         audio_level=self.audio_level,
                                         bit_hook=self._update_sync_state,
                                         hook_every=self.SYNC_CHECK_BITS):
+                if self._soft_lock is not None and self._soft_lock.releases != releases:
+                    # The weak-signal lock was released since the last character:
+                    # end the line in progress so the next text starts a fresh one.
+                    releases = self._soft_lock.releases
+                    assembler.end_line()
                 assembler.feed(ch)
         finally:
             assembler.close()

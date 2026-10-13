@@ -68,6 +68,11 @@ parity (which slots are the repeats). That is 7 x 2 = 14 hypotheses.
    As a last resort the lock is released if its own alignment has scored
    low for a long time.
 
+8. Phasing runs. The phasing signals sent before a message are a 7-bit
+   pattern repeated, which the lock can read one bit out of step, as a
+   long run of one letter (typically K). Real text never has a run of
+   `max_letter_run` identical letters, so such a run is dropped.
+
 Units: one *comparison* is two character slots, 14 bit decisions, 0.14 s.
 
 Not included, deliberately: any guard against a steady carrier (judged
@@ -124,6 +129,7 @@ class SoftLockParams:
     switch_margin: float = 3.0        # ... and its lead
     switch_hold: int = 3              # consecutive comparisons the rule must hold
     own_release_hold: int = 25        # release if the locked alignment alone stays low
+    max_letter_run: int = 8           # drop runs of this many identical letters (0 = keep them)
 
     @classmethod
     def for_level(cls, level: str) -> "SoftLockParams":
@@ -192,6 +198,10 @@ class SoftLockDecoder:
         self._challenge_run = 0
         self._dwell = 0              # comparisons since the lock last started or moved
         self.switches = 0            # times the lock has moved to another alignment
+        self.releases = 0            # times a lock has been released
+        self._run_char = ""          # the letter in the current run of identical letters
+        self._run_len = 0
+        self._dropping = False
         self._prev_end = 0           # decisions before this belong to a finished lock
         self._fec: Optional[SoftFecCombiner] = None
         self._p0 = 0
@@ -278,6 +288,7 @@ class SoftLockDecoder:
         self._own_low_run = 0
         self._challenge_run = 0
         self._dwell = 0
+        self._reset_run()
         self._fec = SoftFecCombiner()
         phi = int(_PHI[h])
         m0 = max((b - p.window + 1 - p.replay_margin) * BINS_PER_STEP,
@@ -305,8 +316,35 @@ class SoftLockDecoder:
                 dx_code, dx_soft = self._recent[-6]
                 rx_code, rx_soft = code, self._recent[-1][1]
                 for ch in self._fec._combine(dx_code, dx_soft, rx_code, rx_soft):
-                    self._pending.append((start + 7, ch, start))
+                    self._queue(start + 7, ch, start)
             self._t += 1
+
+    def _reset_run(self) -> None:
+        self._run_char, self._run_len, self._dropping = "", 0, False
+
+    def _queue(self, end: int, ch: str, pos: int) -> None:
+        """Adds a decoded character to the held-back queue, dropping runs
+        of `max_letter_run` or more identical letters (see item 8 above).
+        Characters are held for 15 comparisons, longer than the run limit,
+        so the start of a run is still in the queue when it is recognised."""
+        limit = self.params.max_letter_run
+        if limit <= 0 or not ch.isalpha():
+            self._reset_run()
+            self._pending.append((end, ch, pos))
+            return
+        if ch == self._run_char:
+            self._run_len += 1
+        else:
+            self._run_char, self._run_len, self._dropping = ch, 1, False
+        if self._dropping:
+            return
+        if self._run_len >= limit:
+            self._dropping = True
+            for _ in range(self._run_len - 1):
+                if self._pending and self._pending[-1][1] == ch:
+                    self._pending.pop()
+            return
+        self._pending.append((end, ch, pos))
 
     def _maybe_release(self, b: int) -> Iterator[Tuple[str, int]]:
         p = self.params
@@ -324,6 +362,7 @@ class SoftLockDecoder:
         if self._low_run >= p.release_hold or (p.follow and self._own_low_run >= p.own_release_hold):
             self._pending.clear()                     # what is left is the stray tail
             self._locked = False
+            self.releases += 1
             self._prev_end = max(self._prev_end, limit)
             self._hist.clear()                        # start again from empty
 
@@ -374,6 +413,7 @@ class SoftLockDecoder:
             self._p0 += 7
         self._t = 0
         self._recent.clear()
+        self._reset_run()
         self._low_run = 0
         self._own_low_run = 0
         self._challenge_run = 0

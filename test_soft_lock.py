@@ -328,3 +328,98 @@ def test_following_makes_no_difference_to_a_single_signal_without_slips():
     on, decoder = _decode(decisions)
     off, _ = _decode(decisions, SoftLockParams(follow=False))
     assert on == off and decoder.switches == 0
+
+
+# ---------------------------------------------------------------------------
+# Closing the open line, and runs of one letter
+# ---------------------------------------------------------------------------
+
+def test_a_run_of_identical_letters_is_dropped_but_the_text_around_it_is_kept():
+    decoder = SoftLockDecoder()
+    for i, ch in enumerate("AB" + "K" * 12 + "CD"):
+        decoder._queue(i, ch, i)
+    assert "".join(ch for _, ch, _ in decoder._pending) == "ABCD"
+    keep = SoftLockDecoder(SoftLockParams(max_letter_run=0))
+    for i, ch in enumerate("AB" + "K" * 12 + "CD"):
+        keep._queue(i, ch, i)
+    assert "".join(ch for _, ch, _ in keep._pending) == "AB" + "K" * 12 + "CD"
+
+
+def test_short_runs_digits_and_spaces_are_never_dropped():
+    decoder = SoftLockDecoder()
+    text = "LL" + "K" * 7 + " " * 12 + "0" * 10 + "\r\n" * 6
+    for i, ch in enumerate(text):
+        decoder._queue(i, ch, i)
+    assert "".join(ch for _, ch, _ in decoder._pending) == text
+
+
+def test_the_letter_run_from_idle_signals_between_two_messages_is_dropped():
+    def build(seed, pre, tail):
+        msg = random_message(np.random.default_rng(seed), n_lines=2)
+        return build_transmission(msg, sample_rate=FS, mark_freq=PROFILE.mark_freq,
+                                  space_freq=PROFILE.space_freq, preamble_s=pre, tail_slots=tail)
+    first, second = build(1, 5.0, 40), build(2, 1.0, 12)
+    audio = apply_channel(np.concatenate([first.audio, second.audio]), FS, first.signal_power,
+                          Channel(snr_db=6.0, seed=2))
+    decisions = front_end_decisions(audio, PROFILE)
+    kept, _ = _decode(decisions, SoftLockParams(max_letter_run=0))
+    dropped, _ = _decode(decisions)
+    import re
+    assert re.search(r"([A-Z])\1{7,}", _text(kept))                  # the synthetic idle gap does produce one
+    assert not re.search(r"([A-Z])\1{7,}", _text(dropped))
+    assert "ZCZC FD67" in _text(dropped)                              # the second message still arrives
+
+
+def test_end_line_starts_a_new_timestamped_line_for_the_next_text():
+    import datetime
+    from navtex_outputs import LineAssembler, OutputSink
+
+    class Recorder(OutputSink):
+        def __init__(self):
+            self.events = []
+        def line_start(self, timestamp, strength):
+            self.events.append(("start", timestamp.second, strength))
+        def write(self, text):
+            self.events.append(("write", text))
+        def line_end(self):
+            self.events.append(("end",))
+
+    ticks = iter(range(100))
+    rec = Recorder()
+    assembler = LineAssembler([rec], strength=lambda: 7,
+                              clock=lambda: datetime.datetime(2026, 1, 1, 0, 0, next(ticks)))
+    assembler.end_line()                                   # nothing in progress: no event
+    assert rec.events == []
+    assembler.feed("AB")
+    assembler.end_line()
+    assembler.feed("CD")
+    assert rec.events == [("start", 0, 7), ("write", "A"), ("write", "B"),
+                          ("write", "\r"), ("end",), ("write", "\n"),
+                          ("start", 1, 7), ("write", "C"), ("write", "D")]
+
+
+def test_the_session_ends_the_line_when_the_lock_is_released():
+    class StubLock:
+        releases = 0
+        state = "searching"
+        def decode(self, _bit_decisions):
+            yield "A"
+            yield "B"
+            self.releases += 1
+            yield "C"
+
+    from navtex_outputs import OutputSink
+    lines, current = [], []
+
+    class Collect(OutputSink):
+        def line_start(self, timestamp, strength):
+            current.clear()
+        def write(self, text):
+            current.append(text)
+        def line_end(self):
+            lines.append("".join(current).replace("\r", "").replace("\n", ""))
+
+    session = DecodeSession(ArraySource(np.zeros(FS)), soft_profile(), sinks=[Collect()])
+    session._soft_lock = StubLock()
+    session.run()
+    assert lines == ["AB", "C"]

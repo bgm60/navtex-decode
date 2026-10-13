@@ -151,6 +151,15 @@ class LineAssembler:
                 self._in_line = False
                 self._after_cr = ch == "\r"
 
+    def end_line(self) -> None:
+        """Ends the line in progress, if there is one, as if a CR LF had
+        arrived. Used when the decoder loses its lock, so that whatever
+        arrives next starts a new line with its own timestamp and strength
+        reading, instead of being added to a half-finished line that is
+        stamped with a time from long before."""
+        if self._in_line:
+            self.feed("\r\n")
+
     def close(self) -> None:
         """Ends any unfinished line, then closes every sink."""
         if self._in_line:

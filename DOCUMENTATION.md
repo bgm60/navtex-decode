@@ -461,6 +461,11 @@ instead of printing garbage; two stations of similar strength do not make
 it flip between them. The lock is released when the signal stops
 matching, and a 2 s output delay
 keeps the garbage at the end of a transmission out of the output.
+Runs of eight or more identical letters are dropped: they are the idle
+phasing signals read one bit out of step, usually a long run of `K`, and
+real text never contains them. When a lock is released the log line in
+progress is ended, so the next text starts a new line with its own
+timestamp and signal strength.
 
 The levels set how much evidence is required before locking:
 
