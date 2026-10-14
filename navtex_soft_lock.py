@@ -73,6 +73,13 @@ parity (which slots are the repeats). That is 7 x 2 = 14 hypotheses.
    long run of one letter (typically K). Real text never has a run of
    `max_letter_run` identical letters, so such a run is dropped.
 
+9. Idle look-alikes. The same effect usually shows as a mixture of a few
+   letters and unreadable characters, not a single letter. A group pair
+   is an idle look-alike when its two groups are each within one bit of
+   the same one-bit-or-more rotation of the two different phasing codes.
+   Two copies of a real character agree, so text cannot look like that.
+   `ghost_hold` of them in a row are dropped, with the ones just before.
+
 Units: one *comparison* is two character slots, 14 bit decisions, 0.14 s.
 
 Not included, deliberately: any guard against a steady carrier (judged
@@ -130,6 +137,7 @@ class SoftLockParams:
     switch_hold: int = 3              # consecutive comparisons the rule must hold
     own_release_hold: int = 25        # release if the locked alignment alone stays low
     max_letter_run: int = 8           # drop runs of this many identical letters (0 = keep them)
+    ghost_hold: int = 3               # idle-phasing look-alike pairs in a row before they are dropped (0 = off)
 
     @classmethod
     def for_level(cls, level: str) -> "SoftLockParams":
@@ -161,6 +169,28 @@ def _slip_neighbours(h: int) -> Tuple[int, int]:
             p, q = 6, 1 - par
         out.append(p * 2 + q)
     return out[0], out[1]
+
+
+_PHASING_A, _PHASING_B = "1111000", "0110011"          # the two phasing signals
+
+
+def _hamming(a: str, b: str) -> int:
+    return sum(x != y for x, y in zip(a, b))
+
+
+def _rotate(code: str, k: int) -> str:
+    return code[k:] + code[:k]
+
+
+# (earlier group, repeat group) targets of an idle signal read k bits out of step
+_GHOST_TARGETS = [(_rotate(x, k), _rotate(y, k)) for k in range(1, 7)
+                  for x, y in ((_PHASING_A, _PHASING_B), (_PHASING_B, _PHASING_A))]
+
+
+def _is_idle_lookalike(dx: str, rx: str) -> bool:
+    """True when the two groups are each within one bit of an idle pair
+    read out of step (see item 9 of the module docstring)."""
+    return any(_hamming(dx, a) <= 1 and _hamming(rx, b) <= 1 for a, b in _GHOST_TARGETS)
 
 
 _PHI = np.repeat(np.arange(7), 2)            # bit phase of each hypothesis
@@ -202,6 +232,9 @@ class SoftLockDecoder:
         self._run_char = ""          # the letter in the current run of identical letters
         self._run_len = 0
         self._dropping = False
+        self._ghost_run = 0          # idle look-alike pairs in a row
+        self._ghost_keys: List[int] = []
+        self._ghost_dropping = False
         self._prev_end = 0           # decisions before this belong to a finished lock
         self._fec: Optional[SoftFecCombiner] = None
         self._p0 = 0
@@ -289,6 +322,7 @@ class SoftLockDecoder:
         self._challenge_run = 0
         self._dwell = 0
         self._reset_run()
+        self._reset_ghost()
         self._fec = SoftFecCombiner()
         phi = int(_PHI[h])
         m0 = max((b - p.window + 1 - p.replay_margin) * BINS_PER_STEP,
@@ -315,12 +349,42 @@ class SoftLockDecoder:
             if self._t >= 5 and (self._i0 + self._t) % 2 == par:
                 dx_code, dx_soft = self._recent[-6]
                 rx_code, rx_soft = code, self._recent[-1][1]
+                if self._skip_idle_lookalike(dx_code, rx_code, start):
+                    self._t += 1
+                    continue
                 for ch in self._fec._combine(dx_code, dx_soft, rx_code, rx_soft):
                     self._queue(start + 7, ch, start)
             self._t += 1
 
     def _reset_run(self) -> None:
         self._run_char, self._run_len, self._dropping = "", 0, False
+
+    def _reset_ghost(self) -> None:
+        self._ghost_run, self._ghost_keys, self._ghost_dropping = 0, [], False
+
+    def _skip_idle_lookalike(self, dx: str, rx: str, key: int) -> bool:
+        """Tracks idle look-alike pairs (item 9 above). Returns True for a pair
+        that is to be dropped without decoding. The first `ghost_hold - 1` of a
+        run are decoded as usual, because they cannot yet be told from text;
+        when the run reaches `ghost_hold` the characters they produced, which
+        are still held back, are removed too."""
+        hold = self.params.ghost_hold
+        if hold <= 0:
+            return False
+        if dx in (_PHASING_A, _PHASING_B) and rx in (_PHASING_A, _PHASING_B):
+            return False                                  # genuine idle: handled by the combiner
+        if not _is_idle_lookalike(dx, rx):
+            self._reset_ghost()
+            return False
+        self._ghost_run += 1
+        if self._ghost_run < hold:
+            self._ghost_keys.append(key)
+            return False
+        if not self._ghost_dropping:
+            self._ghost_dropping = True
+            earlier = set(self._ghost_keys)
+            self._pending = deque(item for item in self._pending if item[2] not in earlier)
+        return True
 
     def _queue(self, end: int, ch: str, pos: int) -> None:
         """Adds a decoded character to the held-back queue, dropping runs
@@ -414,6 +478,7 @@ class SoftLockDecoder:
         self._t = 0
         self._recent.clear()
         self._reset_run()
+        self._reset_ghost()
         self._low_run = 0
         self._own_low_run = 0
         self._challenge_run = 0

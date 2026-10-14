@@ -32,7 +32,7 @@ from navtex_config import (WEAK_SIGNAL_LOCK_CHOICES, ConfigError, Profile, load_
 from navtex_session import (DecodeSession, SignalStrengthTracker, build_soft_lock, decode_characters,
                             weak_signal_lock_enabled)
 from navtex_soft_lock import (BINS_PER_STEP, CHOICES, LEVELS, SoftLockDecoder, SoftLockParams,
-                              _slip_neighbours, comparison_scores)
+                              _is_idle_lookalike, _slip_neighbours, comparison_scores)
 from navtex_synth import Channel, apply_channel, build_transmission, random_message
 
 PROFILE = Profile()
@@ -362,8 +362,8 @@ def test_the_letter_run_from_idle_signals_between_two_messages_is_dropped():
     audio = apply_channel(np.concatenate([first.audio, second.audio]), FS, first.signal_power,
                           Channel(snr_db=6.0, seed=2))
     decisions = front_end_decisions(audio, PROFILE)
-    kept, _ = _decode(decisions, SoftLockParams(max_letter_run=0))
-    dropped, _ = _decode(decisions)
+    kept, _ = _decode(decisions, SoftLockParams(max_letter_run=0, ghost_hold=0))
+    dropped, _ = _decode(decisions, SoftLockParams(ghost_hold=0))
     import re
     assert re.search(r"([A-Z])\1{7,}", _text(kept))                  # the synthetic idle gap does produce one
     assert not re.search(r"([A-Z])\1{7,}", _text(dropped))
@@ -423,3 +423,50 @@ def test_the_session_ends_the_line_when_the_lock_is_released():
     session._soft_lock = StubLock()
     session.run()
     assert lines == ["AB", "C"]
+
+
+# ---------------------------------------------------------------------------
+# Idle look-alikes
+# ---------------------------------------------------------------------------
+
+def test_idle_signals_read_out_of_step_are_recognised_and_real_pairs_are_not():
+    from navtex_step4_character_decode import CONTROL, LETTERS
+    assert _is_idle_lookalike("1110000", "1100111")           # seen in a synthetic idle gap
+    assert _is_idle_lookalike("0111100", "1011001")           # the 'K' of the overnight logs
+    assert not _is_idle_lookalike("1111000", "0110011")       # genuine idle: handled elsewhere
+    codes = list(LETTERS) + list(CONTROL)
+    for code in codes:                                        # two copies of a real character agree
+        assert not _is_idle_lookalike(code, code)
+        for bit in range(7):                                  # ... even with a bit error in one copy
+            flipped = code[:bit] + ("1" if code[bit] == "0" else "0") + code[bit + 1:]
+            assert not _is_idle_lookalike(code, flipped)
+            assert not _is_idle_lookalike(flipped, code)
+
+
+def test_look_alike_pairs_are_dropped_only_once_three_come_in_a_row():
+    decoder = SoftLockDecoder()
+    decoder._pending.append((0, "Q", 100))                    # earlier real text must survive
+    for i in range(2):
+        decoder._queue(10 + i, "Z", i)                         # what the first two pairs would have produced
+        assert not decoder._skip_idle_lookalike("1110000", "1100111", i)
+    assert [c for _, c, _ in decoder._pending] == ["Q", "Z", "Z"]
+    assert decoder._skip_idle_lookalike("1110000", "1100111", 2)       # the third: dropped, and the two before go
+    assert [c for _, c, _ in decoder._pending] == ["Q"]
+    assert decoder._skip_idle_lookalike("1110000", "1100111", 3)       # and so are the rest of the run
+    assert not decoder._skip_idle_lookalike("1001101", "1001101", 4)   # a real character ends the run
+    assert not decoder._skip_idle_lookalike("1110000", "1100111", 5)   # a new run starts counting again
+
+
+def test_the_idle_gap_between_two_messages_no_longer_prints_the_look_alike_letters():
+    def build(seed, pre, tail):
+        msg = random_message(np.random.default_rng(seed), n_lines=2)
+        return build_transmission(msg, sample_rate=FS, mark_freq=PROFILE.mark_freq,
+                                  space_freq=PROFILE.space_freq, preamble_s=pre, tail_slots=tail)
+    first, second = build(1, 5.0, 40), build(2, 1.0, 12)
+    audio = apply_channel(np.concatenate([first.audio, second.audio]), FS, first.signal_power,
+                          Channel(snr_db=6.0, seed=2))
+    decisions = front_end_decisions(audio, PROFILE)
+    off = _text(_decode(decisions, SoftLockParams(max_letter_run=0, ghost_hold=0))[0])
+    on = _text(_decode(decisions, SoftLockParams(max_letter_run=0))[0])
+    assert "ZZZZZZ" in off and "ZZZZ" not in on
+    assert "ZCZC FD67" in on
