@@ -113,6 +113,14 @@ class Profile:
     centre_freq: float = 1700.0     # Hz, midpoint of the two audio tones
     tones_inverted: bool = False    # True if mark is the LOWER tone
 
+    # --- Weak-signal lock (navtex_soft_lock.py) ---
+    # True (the default) replaces the character-sync and FEC parity locks
+    # below with the soft-evidence lock, which decodes much weaker signals;
+    # False uses the standard locks. While it is on, the 11 character-sync and FEC-lock settings
+    # below are ignored. (Older configs used "off"/"conservative"/"normal"/
+    # "sensitive"; those are rejected -- use true or false.)
+    weak_signal_lock: bool = True
+
     # --- Step 3: bit-clock recovery (BitSync) ---
     loop_gain: float = 0.05
 
@@ -161,6 +169,9 @@ class Profile:
             raise ConfigError(f"mode must be \"file\" or \"live\", got {self.mode!r}")
         if self.mode == "file" and not self.wav_file:
             raise ConfigError("mode = \"file\" requires wav_file to be set")
+        if not isinstance(self.weak_signal_lock, bool):
+            raise ConfigError(
+                f"weak_signal_lock must be true or false, got {self.weak_signal_lock!r}")
 
         # Both tones must be above 0 Hz and below the Nyquist frequency
         # (half the sample rate), or the tone detector cannot see them.
@@ -180,6 +191,10 @@ class Profile:
         # not on thin-but-valid margins -- it's not this validator's job
         # to second-guess how much margin is "enough", only to catch a
         # configuration that cannot work at all.
+        # The settings checked below belong to the character-sync and FEC
+        # locks, which weak_signal_lock replaces; they are ignored then.
+        if self.weak_signal_lock:
+            return
         min_bits = self.min_groups_for_acquire * 7
         if self.sync_window <= min_bits:
             raise ConfigError(
@@ -251,7 +266,10 @@ def _coerce(field_name: str, field_type: type, raw: Any) -> Any:
             continue
 
     expected = " or ".join(m.__name__ for m in members)
-    raise ConfigError(f"{field_name}: expected {expected}, got {type(raw).__name__} ({raw!r})")
+    hint = ""
+    if field_name == "weak_signal_lock":
+        hint = " (the levels were replaced by a switch: use true or false)"
+    raise ConfigError(f"{field_name}: expected {expected}, got {type(raw).__name__} ({raw!r}){hint}")
 
 
 def load_profile(config_path: str, profile_name: str) -> Profile:

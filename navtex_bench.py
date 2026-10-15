@@ -102,7 +102,8 @@ from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 import numpy as np
 
 from navtex_config import Profile, load_profile
-from navtex_session import SignalStrengthTracker, build_config, build_grouper, decode_characters
+from navtex_session import (SignalStrengthTracker, build_config, build_grouper, build_soft_lock,
+                            decode_characters, weak_signal_lock_enabled)
 from navtex_soft_fec_combine import SoftBitSync, SoftCharacterGrouper, SoftFecCombiner
 from navtex_step1_sampling_windowing import AudioSource, Windower
 from navtex_step2_tone_detection import ToneDetector
@@ -493,13 +494,28 @@ def positional_scores(tx, audio: np.ndarray, profile: Profile, oracle: bool = Fa
         return int(min(max(np.searchsorted(starts, g, side="right") - 1, 0), n_slots - 1))
 
     visible = visible_truth(sent_slots(tx))
-    fec = _recording_fec(profile)
-    text = run_tagged_pipeline(decisions, profile, build_grouper(profile), fec, slot_of)
-    if verify:
-        tracker = SignalStrengthTracker(window=profile.signal_strength_window)
-        reference = "".join(decode_characters(ArraySource(audio), profile, tracker))
-        assert reference == text, "tagged pipeline differs from the production decoder"
-    scores = {"P": positional_score(fec.out, visible)}
+    if weak_signal_lock_enabled(profile):
+        # The weak-signal lock, run as the real module. "P" is then that
+        # decoder, so the same sweep compares settings of weak_signal_lock.
+        out: Dict[int, str] = {}
+        text_chars = []
+        for ch, pos in build_soft_lock(profile).events(decisions):
+            text_chars.append(ch)
+            if ch not in FLAG_CHARS:          # as _Recording: only decoded characters
+                out[slot_of(pos + 3)] = ch
+        if verify:
+            tracker = SignalStrengthTracker(window=profile.signal_strength_window)
+            reference = "".join(decode_characters(ArraySource(audio), profile, tracker))
+            assert reference == "".join(text_chars), "weak-signal lock differs from decode_characters"
+        scores = {"P": positional_score(out, visible)}
+    else:
+        fec = _recording_fec(profile)
+        text = run_tagged_pipeline(decisions, profile, build_grouper(profile), fec, slot_of)
+        if verify:
+            tracker = SignalStrengthTracker(window=profile.signal_strength_window)
+            reference = "".join(decode_characters(ArraySource(audio), profile, tracker))
+            assert reference == text, "tagged pipeline differs from the production decoder"
+        scores = {"P": positional_score(fec.out, visible)}
     if oracle:
         fec_a = _recording_fec(profile)
         grouper = _OracleGrouper(lambda pos: int(starts[slot_of(pos)] % 7),
@@ -698,7 +714,7 @@ def print_summary(rows: Sequence[Dict[str, float]], ref_bw_hz: float = 2500.0,
               "(a ceiling, not an achievable decoder)")
     snrs = [r["snr_db"] for r in rows if r["snr_db"] is not None]
     if targets and len(snrs) == len(rows) and len(snrs) > 1:
-        columns = [("production", "recov")] + ([("A", "recov_a"), ("B", "recov_b")] if oracle else [])
+        columns = [("decoder", "recov")] + ([("A", "recov_a"), ("B", "recov_b")] if oracle else [])
         for target in targets:
             parts = []
             for name, key in columns:

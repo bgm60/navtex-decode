@@ -50,7 +50,7 @@ from navtex_synth import (
     theory_raw_ber,
 )
 
-PROFILE = Profile()
+PROFILE = Profile(weak_signal_lock=False)   # these tests exercise the standard decoder
 
 
 # ---------------------------------------------------------------------------

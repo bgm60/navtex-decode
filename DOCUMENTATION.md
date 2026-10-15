@@ -429,15 +429,60 @@ decoder with a clear error message rather than a traceback:
   parameters (`loop_gain = 0` is fine), but `true`/`false` are never
   accepted as numbers or the other way round.
 - `mode` must be `"file"` or `"live"`, and file mode requires `wav_file`.
+- `weak_signal_lock` must be `true` or `false`. The old values `"off"`,
+  `"conservative"`, `"normal"` and `"sensitive"` are rejected.
 - `sync_window` must be greater than `min_groups_for_acquire × 7`,
   otherwise character synchronisation could never collect enough groups
   to acquire.
 - `rate_window` must be at least `min_samples_for_rate`, otherwise the FEC
   combiner could never collect enough results to lock.
+- The last two checks are skipped while `weak_signal_lock` is on, because
+  those settings are then not used.
 
 ---
 
 ## 5. Configuration parameters
+
+### 5.0 Weak-signal lock
+
+| Parameter | Default | Description |
+|---|---|---|
+| `weak_signal_lock` | `true` | `true` uses the weak-signal lock; `false` uses the standard character-sync and FEC locks. |
+
+SITOR-B sends every character twice, five slots apart. The weak-signal
+lock exploits this: for each of 14 hypotheses (7 bit phases times the two
+possible DX/RX parities) it scores how well each group of 7 bits matches
+the group five slots earlier, adds the scores over a 6.3 s window, and
+locks when one hypothesis is clearly the best. The soft history is kept,
+so the text received while the lock was being found is decoded too. While locked, the lock keeps comparing all 14 hypotheses. If a one-bit
+slip in the bit clock moves the signal to a neighbouring alignment, or a
+second station clearly takes over, the lock moves to the new alignment
+instead of printing garbage; two stations of similar strength do not make
+it flip between them. The lock is released when the signal stops
+matching, and a 2 s output delay
+keeps the garbage at the end of a transmission out of the output.
+Pairs of groups that look like the idle phasing signals read out of step,
+three or more in a row, are dropped (real text cannot look like that,
+because the two copies of a character agree). Runs of eight or more
+identical letters are also dropped: they are the idle
+phasing signals read one bit out of step, usually a long run of `K`, and
+real text never contains them. When a lock is released the log line in
+progress is ended, so the next text starts a new line with its own
+timestamp and signal strength.
+
+The lock needs a threshold of z* = 5.0 before it locks. On noise alone
+this gave no false locks in 24 h (z* = 4.0 gave about 0.3 per hour and
+3.5 about 1.8 per hour), and on real overnight logs 4.0 and 5.0 decoded
+alike. The threshold is an internal constant (`DEFAULT_Z_STAR` in
+`navtex_soft_lock.py`), not a setting.
+
+While the lock is on, these settings are ignored: `sync_window`,
+`min_groups_for_acquire`, `char_acquire_threshold`, `char_drop_threshold`,
+`char_switch_margin`, `fec_acquire_threshold`, `fec_switch_margin`,
+`min_samples_for_rate`, `rate_window`, `lock_window` and
+`phasing_burst_threshold`. The status badge shows "Locked" while a lock is
+held and "Searching" otherwise. The lock needs the tuning to be within
+about 50 Hz of the signal.
 
 ### 5.1 Input source and logging
 
