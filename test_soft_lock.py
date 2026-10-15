@@ -35,7 +35,8 @@ from navtex_soft_lock import (BINS_PER_STEP, DEFAULT_Z_STAR, SoftLockDecoder, So
                               _is_idle_lookalike, _slip_neighbours, comparison_scores)
 from navtex_synth import Channel, apply_channel, build_transmission, random_message
 
-PROFILE = Profile()
+DEFAULTS = Profile()
+PROFILE = dataclasses.replace(DEFAULTS, weak_signal_lock=False)   # the standard decoder
 FS = PROFILE.sample_rate
 
 
@@ -70,8 +71,8 @@ def soft_profile(**kw):
 # Configuration
 # ---------------------------------------------------------------------------
 
-def test_setting_defaults_to_off_and_the_threshold_is_the_conservative_value():
-    assert PROFILE.weak_signal_lock is False
+def test_setting_defaults_to_on_and_the_threshold_is_the_conservative_value():
+    assert DEFAULTS.weak_signal_lock is True
     assert DEFAULT_Z_STAR == 5.0 and SoftLockParams().z_star == DEFAULT_Z_STAR
 
 
@@ -90,9 +91,9 @@ def test_character_sync_and_fec_settings_are_not_checked_while_the_lock_is_on():
 
 def test_the_setting_loads_from_a_toml_profile(tmp_path):
     path = tmp_path / "p.toml"
-    path.write_text('[a]\nmode = "live"\nweak_signal_lock = true\n[b]\nmode = "live"\n')
-    assert load_profile(str(path), "a").weak_signal_lock is True
-    assert load_profile(str(path), "b").weak_signal_lock is False
+    path.write_text('[a]\nmode = "live"\nweak_signal_lock = false\n[b]\nmode = "live"\n')
+    assert load_profile(str(path), "a").weak_signal_lock is False
+    assert load_profile(str(path), "b").weak_signal_lock is True
 
 
 @pytest.mark.parametrize("old", ["off", "conservative", "normal", "sensitive"])

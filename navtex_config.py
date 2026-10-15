@@ -114,12 +114,12 @@ class Profile:
     tones_inverted: bool = False    # True if mark is the LOWER tone
 
     # --- Weak-signal lock (navtex_soft_lock.py) ---
-    # False uses the character-sync and FEC parity locks below. True
-    # replaces both with the soft-evidence lock, which decodes much weaker
-    # signals. While it is on, the 11 character-sync and FEC-lock settings
+    # True (the default) replaces the character-sync and FEC parity locks
+    # below with the soft-evidence lock, which decodes much weaker signals;
+    # False uses the standard locks. While it is on, the 11 character-sync and FEC-lock settings
     # below are ignored. (Older configs used "off"/"conservative"/"normal"/
     # "sensitive"; those are rejected -- use true or false.)
-    weak_signal_lock: bool = False
+    weak_signal_lock: bool = True
 
     # --- Step 3: bit-clock recovery (BitSync) ---
     loop_gain: float = 0.05

@@ -447,7 +447,7 @@ decoder with a clear error message rather than a traceback:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `weak_signal_lock` | `false` | `true` turns the weak-signal lock on. |
+| `weak_signal_lock` | `true` | `true` uses the weak-signal lock; `false` uses the standard character-sync and FEC locks. |
 
 SITOR-B sends every character twice, five slots apart. The weak-signal
 lock exploits this: for each of 14 hypotheses (7 bit phases times the two

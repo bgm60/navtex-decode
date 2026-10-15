@@ -34,8 +34,8 @@ char_drop_threshold = 0.46
 min_groups_for_acquire = 25
 
 # --- Very weak or fading signals: the weak-signal lock replaces the standard
-# character sync and FEC locking. true or false;
-# false (the default) keeps the standard decoder. Text is delayed by about 2 s.
+# character sync and FEC locking. true (the default) or false;
+# false keeps the standard decoder. Text is delayed by about 2 s.
 # The character-sync and FEC settings are ignored while it is on. ---
 [weak_signal]
 mode = "live"

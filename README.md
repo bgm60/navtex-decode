@@ -140,15 +140,15 @@ written to the named SQLite database.
 
 ### Weak-signal lock
 
-For very weak or fading signals set `weak_signal_lock = true` (default `false`). The decoder then finds
+For very weak or fading signals the weak-signal lock is on by default (`weak_signal_lock = true`; set it to `false` for the standard decoder). The decoder then finds
 character alignment and DX/RX parity by comparing each group of bits with
 the group five slots earlier, instead of the standard synchronisation and
 FEC locking. In synthetic tests it recovers 10% of characters at about
 -13 dB SNR, against about -8 dB for the standard decoder. Text appears
 about 2 s after it was received, and some garbage characters are normal at
 the edge of reception. With the lock on, the character-sync and FEC
-settings are ignored (the GUI greys them out). Higher sensitivity locks on
-earlier but gives more false locks on noise.
+settings are ignored (the GUI greys them out). It almost never locks onto
+noise.
 
 ## Receiver setup
 
