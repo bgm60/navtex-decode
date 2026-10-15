@@ -429,8 +429,8 @@ decoder with a clear error message rather than a traceback:
   parameters (`loop_gain = 0` is fine), but `true`/`false` are never
   accepted as numbers or the other way round.
 - `mode` must be `"file"` or `"live"`, and file mode requires `wav_file`.
-- `weak_signal_lock` must be one of `"off"`, `"conservative"`, `"normal"`
-  or `"sensitive"`.
+- `weak_signal_lock` must be `true` or `false`. The old values `"off"`,
+  `"conservative"`, `"normal"` and `"sensitive"` are rejected.
 - `sync_window` must be greater than `min_groups_for_acquire × 7`,
   otherwise character synchronisation could never collect enough groups
   to acquire.
@@ -447,7 +447,7 @@ decoder with a clear error message rather than a traceback:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `weak_signal_lock` | `"off"` | `"off"`, `"conservative"`, `"normal"` or `"sensitive"`. |
+| `weak_signal_lock` | `false` | `true` turns the weak-signal lock on. |
 
 SITOR-B sends every character twice, five slots apart. The weak-signal
 lock exploits this: for each of 14 hypotheses (7 bit phases times the two
@@ -470,13 +470,11 @@ real text never contains them. When a lock is released the log line in
 progress is ended, so the next text starts a new line with its own
 timestamp and signal strength.
 
-The levels set how much evidence is required before locking:
-
-| Level | Threshold z* | False locks on noise |
-|---|---|---|
-| `sensitive` | 3.5 | about 1.8 per hour |
-| `normal` | 4.0 | about 0.3 per hour |
-| `conservative` | 5.0 | none seen in 24 h of noise |
+The lock needs a threshold of z* = 5.0 before it locks. On noise alone
+this gave no false locks in 24 h (z* = 4.0 gave about 0.3 per hour and
+3.5 about 1.8 per hour), and on real overnight logs 4.0 and 5.0 decoded
+alike. The threshold is an internal constant (`DEFAULT_Z_STAR` in
+`navtex_soft_lock.py`), not a setting.
 
 While the lock is on, these settings are ignored: `sync_window`,
 `min_groups_for_acquire`, `char_acquire_threshold`, `char_drop_threshold`,

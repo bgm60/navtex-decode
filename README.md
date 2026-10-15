@@ -140,8 +140,7 @@ written to the named SQLite database.
 
 ### Weak-signal lock
 
-For very weak or fading signals set `weak_signal_lock` to `"conservative"`,
-`"normal"` or `"sensitive"` (default `"off"`). The decoder then finds
+For very weak or fading signals set `weak_signal_lock = true` (default `false`). The decoder then finds
 character alignment and DX/RX parity by comparing each group of bits with
 the group five slots earlier, instead of the standard synchronisation and
 FEC locking. In synthetic tests it recovers 10% of characters at about

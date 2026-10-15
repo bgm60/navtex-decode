@@ -28,10 +28,10 @@ import pytest
 
 from navtex_bench import (ArraySource, estimate_slot_starts, front_end_decisions, positional_score,
                           positional_scores, sent_slots, visible_truth)
-from navtex_config import (WEAK_SIGNAL_LOCK_CHOICES, ConfigError, Profile, load_profile)
+from navtex_config import ConfigError, Profile, load_profile
 from navtex_session import (DecodeSession, SignalStrengthTracker, build_soft_lock, decode_characters,
                             weak_signal_lock_enabled)
-from navtex_soft_lock import (BINS_PER_STEP, CHOICES, LEVELS, SoftLockDecoder, SoftLockParams,
+from navtex_soft_lock import (BINS_PER_STEP, DEFAULT_Z_STAR, SoftLockDecoder, SoftLockParams,
                               _is_idle_lookalike, _slip_neighbours, comparison_scores)
 from navtex_synth import Channel, apply_channel, build_transmission, random_message
 
@@ -62,44 +62,45 @@ def recovered(events, tx, decisions, base=0):
     return positional_score(out, visible_truth(sent_slots(tx)))
 
 
-def soft_profile(level="normal", **kw):
-    return dataclasses.replace(PROFILE, weak_signal_lock=level, **kw)
+def soft_profile(**kw):
+    return dataclasses.replace(PROFILE, weak_signal_lock=True, **kw)
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-def test_setting_defaults_to_off_and_the_choices_match_the_module():
-    assert PROFILE.weak_signal_lock == "off"
-    assert tuple(WEAK_SIGNAL_LOCK_CHOICES) == tuple(CHOICES)
-    assert set(LEVELS) == set(CHOICES) - {"off"}
-    assert LEVELS["conservative"] > LEVELS["normal"] > LEVELS["sensitive"]
+def test_setting_defaults_to_off_and_the_threshold_is_the_conservative_value():
+    assert PROFILE.weak_signal_lock is False
+    assert DEFAULT_Z_STAR == 5.0 and SoftLockParams().z_star == DEFAULT_Z_STAR
 
 
-def test_an_unknown_choice_is_a_configuration_error():
+@pytest.mark.parametrize("old", ["off", "conservative", "normal", "sensitive", 1, "true"])
+def test_old_or_non_boolean_values_are_configuration_errors(old):
     with pytest.raises(ConfigError, match="weak_signal_lock"):
-        dataclasses.replace(PROFILE, weak_signal_lock="strong").validate()
+        dataclasses.replace(PROFILE, weak_signal_lock=old).validate()
 
 
 def test_character_sync_and_fec_settings_are_not_checked_while_the_lock_is_on():
     bad = dict(sync_window=10, min_groups_for_acquire=25, rate_window=2, min_samples_for_rate=9)
     with pytest.raises(ConfigError):
         dataclasses.replace(PROFILE, **bad).validate()
-    dataclasses.replace(PROFILE, weak_signal_lock="normal", **bad).validate()   # no error
+    dataclasses.replace(PROFILE, weak_signal_lock=True, **bad).validate()   # no error
 
 
 def test_the_setting_loads_from_a_toml_profile(tmp_path):
     path = tmp_path / "p.toml"
-    path.write_text('[a]\nmode = "live"\nweak_signal_lock = "sensitive"\n[b]\nmode = "live"\n')
-    assert load_profile(str(path), "a").weak_signal_lock == "sensitive"
-    assert load_profile(str(path), "b").weak_signal_lock == "off"
+    path.write_text('[a]\nmode = "live"\nweak_signal_lock = true\n[b]\nmode = "live"\n')
+    assert load_profile(str(path), "a").weak_signal_lock is True
+    assert load_profile(str(path), "b").weak_signal_lock is False
 
 
-def test_levels_map_to_thresholds_and_unknown_levels_are_rejected():
-    assert SoftLockParams.for_level("normal").z_star == LEVELS["normal"]
-    with pytest.raises(ValueError):
-        SoftLockParams.for_level("off")
+@pytest.mark.parametrize("old", ["off", "conservative", "normal", "sensitive"])
+def test_old_toml_level_strings_are_rejected(tmp_path, old):
+    path = tmp_path / "p.toml"
+    path.write_text(f'[a]\nmode = "live"\nweak_signal_lock = "{old}"\n')
+    with pytest.raises(ConfigError, match="weak_signal_lock.*true or false"):
+        load_profile(str(path), "a")
 
 
 def test_session_uses_the_lock_only_when_the_setting_is_on():
@@ -168,7 +169,7 @@ def test_the_bench_scores_the_real_module_exactly_as_the_session_decodes():
 def test_noise_alone_produces_no_text_and_no_lock():
     audio = apply_channel(np.zeros(8 * 60 * FS), FS, 0.005, Channel(snr_db=0.0, seed=11))
     decisions = front_end_decisions(audio, PROFILE)
-    decoder = SoftLockDecoder(SoftLockParams.for_level("conservative"))
+    decoder = SoftLockDecoder(SoftLockParams())
     states = set()
     text = []
     for bd in decisions:
@@ -243,7 +244,7 @@ def test_default_profile_still_uses_the_standard_decoder():
     text = "".join(decode_characters(ArraySource(audio), PROFILE, SignalStrengthTracker()))
     assert "ZCZC" in text
     assert BINS_PER_STEP == 14
-    assert build_soft_lock(soft_profile("sensitive")).params.z_star == LEVELS["sensitive"]
+    assert build_soft_lock(soft_profile()).params.z_star == DEFAULT_Z_STAR
 
 
 # ---------------------------------------------------------------------------

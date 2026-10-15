@@ -106,10 +106,11 @@ _EPS = 1e-12
 BINS_PER_STEP = 14          # decisions per comparison (two 7-bit slots)
 SECONDS_PER_COMPARISON = BINS_PER_STEP / 100.0
 
-# weak_signal_lock setting -> z_star. Measured false locks per hour of noise
-# alone (24 h): 3.5 -> 1.8, 4.0 -> 0.3, 5.0 -> none.
-LEVELS = {"conservative": 5.0, "normal": 4.0, "sensitive": 3.5}
-CHOICES = ("off",) + tuple(LEVELS)
+# Lock threshold used by the weak_signal_lock switch. Measured false locks per
+# hour of noise alone (24 h): 3.5 -> 1.8, 4.0 -> 0.3, 5.0 -> none. Real logs
+# showed 4.0 and 5.0 decode alike, so 5.0 is used. Not a profile setting;
+# experiments and tests vary it through SoftLockParams(z_star=...).
+DEFAULT_Z_STAR = 5.0
 
 
 @dataclass(frozen=True)
@@ -117,7 +118,7 @@ class SoftLockParams:
     """Internal constants. Changing `window`, `gap` or the null statistics
     means z_star must be recalibrated, which is why none of these are
     profile settings."""
-    z_star: float = LEVELS["normal"]
+    z_star: float = DEFAULT_Z_STAR
     window: int = 45                  # comparisons in the detection window
     gap: float = 1.0                  # z lead over the runner-up
     score_sd: float = 1.4168          # sd of the score on noise alone
@@ -138,13 +139,6 @@ class SoftLockParams:
     own_release_hold: int = 25        # release if the locked alignment alone stays low
     max_letter_run: int = 8           # drop runs of this many identical letters (0 = keep them)
     ghost_hold: int = 3               # idle-phasing look-alike pairs in a row before they are dropped (0 = off)
-
-    @classmethod
-    def for_level(cls, level: str) -> "SoftLockParams":
-        if level not in LEVELS:
-            raise ValueError(f"unknown weak_signal_lock level {level!r}; "
-                             f"expected one of {', '.join(CHOICES)}")
-        return cls(z_star=LEVELS[level])
 
 
 def comparison_scores(x: np.ndarray, y: np.ndarray, params: SoftLockParams) -> np.ndarray:
@@ -205,7 +199,7 @@ class SoftLockDecoder:
     (anything with a soft_value attribute, as from SoftBitSync) and it
     yields decoded characters.
 
-        decoder = SoftLockDecoder(SoftLockParams.for_level("normal"))
+        decoder = SoftLockDecoder(SoftLockParams())
         for ch in decoder.decode(bit_decisions):
             ...
 

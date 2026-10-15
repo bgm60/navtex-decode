@@ -72,11 +72,6 @@ class ConfigError(Exception):
 # by the standard (ITU-R M.476-5); not configurable.
 TONE_SHIFT = 170.0
 
-# Valid values of Profile.weak_signal_lock. Kept here (not imported from
-# navtex_soft_lock) so reading a config needs no numerical libraries; a test
-# checks the two lists agree.
-WEAK_SIGNAL_LOCK_CHOICES = ("off", "conservative", "normal", "sensitive")
-
 # Keys that older profiles may contain, with what replaced them. They are
 # reported as errors (not converted automatically), naming the new keys.
 _TONES_REPLACED = ("which is no longer used: the tones are now set with centre_freq "
@@ -119,12 +114,12 @@ class Profile:
     tones_inverted: bool = False    # True if mark is the LOWER tone
 
     # --- Weak-signal lock (navtex_soft_lock.py) ---
-    # "off" uses the character-sync and FEC parity locks below. Any other
-    # value replaces both with the soft-evidence lock, which decodes much
-    # weaker signals; the value sets how readily it locks (see
-    # navtex_soft_lock.LEVELS). While it is on, the 11 character-sync and
-    # FEC-lock settings below are ignored.
-    weak_signal_lock: str = "off"   # "off", "conservative", "normal" or "sensitive"
+    # False uses the character-sync and FEC parity locks below. True
+    # replaces both with the soft-evidence lock, which decodes much weaker
+    # signals. While it is on, the 11 character-sync and FEC-lock settings
+    # below are ignored. (Older configs used "off"/"conservative"/"normal"/
+    # "sensitive"; those are rejected -- use true or false.)
+    weak_signal_lock: bool = False
 
     # --- Step 3: bit-clock recovery (BitSync) ---
     loop_gain: float = 0.05
@@ -174,11 +169,9 @@ class Profile:
             raise ConfigError(f"mode must be \"file\" or \"live\", got {self.mode!r}")
         if self.mode == "file" and not self.wav_file:
             raise ConfigError("mode = \"file\" requires wav_file to be set")
-        if self.weak_signal_lock not in WEAK_SIGNAL_LOCK_CHOICES:
+        if not isinstance(self.weak_signal_lock, bool):
             raise ConfigError(
-                f"weak_signal_lock must be one of "
-                f"{', '.join(repr(c) for c in WEAK_SIGNAL_LOCK_CHOICES)}, "
-                f"got {self.weak_signal_lock!r}")
+                f"weak_signal_lock must be true or false, got {self.weak_signal_lock!r}")
 
         # Both tones must be above 0 Hz and below the Nyquist frequency
         # (half the sample rate), or the tone detector cannot see them.
@@ -200,7 +193,7 @@ class Profile:
         # configuration that cannot work at all.
         # The settings checked below belong to the character-sync and FEC
         # locks, which weak_signal_lock replaces; they are ignored then.
-        if self.weak_signal_lock != "off":
+        if self.weak_signal_lock:
             return
         min_bits = self.min_groups_for_acquire * 7
         if self.sync_window <= min_bits:
@@ -273,7 +266,10 @@ def _coerce(field_name: str, field_type: type, raw: Any) -> Any:
             continue
 
     expected = " or ".join(m.__name__ for m in members)
-    raise ConfigError(f"{field_name}: expected {expected}, got {type(raw).__name__} ({raw!r})")
+    hint = ""
+    if field_name == "weak_signal_lock":
+        hint = " (the levels were replaced by a switch: use true or false)"
+    raise ConfigError(f"{field_name}: expected {expected}, got {type(raw).__name__} ({raw!r}){hint}")
 
 
 def load_profile(config_path: str, profile_name: str) -> Profile:

@@ -245,13 +245,12 @@ def build_fec(profile: Profile) -> SoftFecCombiner:
 
 
 def weak_signal_lock_enabled(profile: Profile) -> bool:
-    return profile.weak_signal_lock != "off"
+    return bool(profile.weak_signal_lock)
 
 
 def build_soft_lock(profile: Profile) -> SoftLockDecoder:
-    """The weak-signal lock for a profile whose weak_signal_lock is not
-    "off". See navtex_soft_lock."""
-    return SoftLockDecoder(SoftLockParams.for_level(profile.weak_signal_lock))
+    """The weak-signal lock for a profile whose weak_signal_lock is true. See navtex_soft_lock."""
+    return SoftLockDecoder(SoftLockParams())
 
 
 def decode_characters(source: AudioSource, profile: Profile,
@@ -267,7 +266,7 @@ def decode_characters(source: AudioSource, profile: Profile,
     `audio_level` (if given) with every audio chunk, and calls `bit_hook`
     (if given) every `hook_every` bits. `grouper` and `fec` are built from
     the profile unless supplied (DecodeSession supplies its own so it can
-    report their status). If the profile's weak_signal_lock is not "off",
+    report their status). If the profile's weak_signal_lock is true,
     `soft_lock` (built from the profile unless supplied) replaces both."""
     config = build_config(profile)
     windower = Windower(config)

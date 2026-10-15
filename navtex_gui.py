@@ -94,7 +94,6 @@ from PyQt6.QtWidgets import (
 from navtex_config import (
     STARTER_CONFIG,
     TONE_SHIFT,
-    WEAK_SIGNAL_LOCK_CHOICES,
     ConfigError,
     Profile,
     delete_profile,
@@ -1107,14 +1106,8 @@ ADVANCED_FIELDS = [
      "Bits averaged for the signal-strength reading (100 bits is 1 second)."),
 ]
 
-# Weak-signal lock choices, in the order shown, and the advanced settings that
-# only the character-sync and FEC locks use (ignored while the lock is on).
-WEAK_SIGNAL_LOCK_LABELS = {
-    "off": "Off",
-    "conservative": "Conservative",
-    "normal": "Normal",
-    "sensitive": "Sensitive",
-}
+# Advanced settings that only the character-sync and FEC locks use (ignored
+# while the weak-signal lock is on).
 UNUSED_WITH_WEAK_SIGNAL_LOCK = (
     "sync_window", "min_groups_for_acquire", "char_acquire_threshold", "char_drop_threshold",
     "char_switch_margin", "fec_acquire_threshold", "fec_switch_margin", "min_samples_for_rate",
@@ -1141,7 +1134,7 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._build_basic_tab(), "Basic")
         tabs.addTab(self._build_advanced_tab(), "Advanced")
-        self.lock_combo.currentIndexChanged.connect(self._update_lock_dependent)
+        self.lock_check.toggled.connect(self._update_lock_dependent)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                    | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
@@ -1199,17 +1192,13 @@ class SettingsDialog(QDialog):
         self.centre_spin.valueChanged.connect(self._update_tone_note)
         self.invert_check.toggled.connect(self._update_tone_note)
 
-        self.lock_combo = QComboBox()
-        for value in WEAK_SIGNAL_LOCK_CHOICES:
-            self.lock_combo.addItem(WEAK_SIGNAL_LOCK_LABELS[value], value)
-        self.lock_combo.setToolTip(
+        self.lock_check = QCheckBox("Weak-signal lock")
+        self.lock_check.setToolTip(
             "Decodes much weaker signals, about 5 dB weaker in tests, by finding the character "
             "timing and the repeat pattern from all the evidence in the signal instead of from "
             "whole characters. Text starts appearing about 6 seconds after a signal begins, and "
-            "appears about 2.5 seconds late. Conservative, Normal and Sensitive set how readily "
-            "it locks: Sensitive may lock onto noise about twice an hour, Normal about once "
-            "every three hours, Conservative hardly ever.")
-        form.addRow("Weak-signal lock:", self.lock_combo)
+            "appears about 2.5 seconds late. It almost never locks onto noise.")
+        form.addRow("", self.lock_check)
         self.lock_note = make_hint(QLabel())
         self.lock_note.setWordWrap(True)
         form.addRow("", self.lock_note)
@@ -1364,7 +1353,7 @@ class SettingsDialog(QDialog):
     def _update_lock_dependent(self) -> None:
         """With the weak-signal lock on, the character-sync and FEC settings
         are not used, so they are greyed out."""
-        on = self.lock_combo.currentData() != "off"
+        on = self.lock_check.isChecked()
         for name in UNUSED_WITH_WEAK_SIGNAL_LOCK:
             self.fields[name].setEnabled(not on)
         self.lock_note.setText(
@@ -1393,8 +1382,7 @@ class SettingsDialog(QDialog):
         self.centre_spin.setValue(p.centre_freq)
         self.invert_check.setChecked(p.tones_inverted)
         self._update_tone_note()
-        index = self.lock_combo.findData(p.weak_signal_lock)
-        self.lock_combo.setCurrentIndex(max(0, index))
+        self.lock_check.setChecked(p.weak_signal_lock)
         self._update_lock_dependent()
         self.log_check.setChecked(bool(p.log_dir))
         self.log_edit.setText(p.log_dir or "")
@@ -1423,7 +1411,7 @@ class SettingsDialog(QDialog):
             device=self._selected_device(),
             centre_freq=round(self.centre_spin.value(), 1),
             tones_inverted=self.invert_check.isChecked(),
-            weak_signal_lock=self.lock_combo.currentData(),
+            weak_signal_lock=self.lock_check.isChecked(),
             log_dir=log_dir or None, db_file=db_file or None,
             **values)
 
