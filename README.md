@@ -4,8 +4,11 @@ A from-scratch software decoder for NAVTEX, the maritime safety broadcast
 service. It takes demodulated audio from a receiver, either live from a
 sound-card input or from a WAV recording, and turns the 100-baud FSK signal
 (CCIR 476 / SITOR-B) into decoded text on the console, with optional
-timestamped logging to a file and/or a SQLite database. A simple GUI is
-also under development.
+timestamped logging to a file and/or a SQLite database.
+
+> **Status of the GUI:** `navtex_gui.py` is frozen and no longer developed.
+> Development now concentrates on the command-line application. The GUI
+> may be missing newer settings and is not covered by the tests.
 
 The decoder uses soft-decision combining of each character's two FEC
 transmissions, self-aligning bit and character synchronisation, and
@@ -39,7 +42,7 @@ stage and of every configuration parameter.
 |---|---|
 | `navtex_decode.py` | Command-line front end. |
 | `navtex_config.py` | Loads and validates TOML configuration profiles. |
-| `navtex_gui.py`    | A simple, experimental Qt6 interface. |
+| `navtex_gui.py`    | Experimental Qt6 interface (frozen, not developed further). |
 | `navtex_session.py` | Builds the pipeline from a profile, opens the audio and runs the decode loop |
 | `navtex_outputs.py` | Formatting and control of decoder output - console, file log & SQL |
 | `navtex_step1_sampling_windowing.py` | Audio sources and the frame windower. |
@@ -63,8 +66,8 @@ stage and of every configuration parameter.
 - `numpy` and `scipy`.
 - `sounddevice` for live audio input.
 - `soundfile` for WAV file input.
-- `PyQt6` for the GUI version.
-- `tomlkit` for the GUI version.
+- `PyQt6` for the (frozen) GUI version.
+- `tomlkit` for the (frozen) GUI version.
 
 ## Setup
 
