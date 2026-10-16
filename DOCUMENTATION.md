@@ -492,6 +492,8 @@ about 50 Hz of the signal.
 | `wav_file` | none | Path to the WAV file. Required in file mode, ignored in live mode. |
 | `device` | system default | Live-mode input device, given either as an index number or as part of the device name. Run with `--list-devices` to see what is available. |
 | `log_dir` | none | Directory for log files. Leave it out to disable logging. |
+| `db_file` | none | SQLite database for logging decoded lines. Leave it out to disable database logging. |
+| `quiet` | `false` | `true` shows no status messages and no decoded text on the console; only errors and warnings (stderr) appear. Requires `log_dir` or `db_file`, otherwise the profile is rejected. The `-q`/`--quiet` and `--no-quiet` command-line options override it. |
 | `signal_strength_window` | `100` | Number of bits averaged for the signal-strength reading in log line prefixes. 100 bits is one second; a larger value gives a steadier reading that responds more slowly to fades. It has no effect on decoding. |
 
 ### 5.2 Audio and tone detection

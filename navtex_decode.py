@@ -30,6 +30,9 @@ for the full schema and navtex.toml.example for a starting point.
     # (navtex.toml in the current directory)
     python navtex_decode.py my_profile
 
+    # Unattended: no console output, only the log file / database
+    python navtex_decode.py my_profile --quiet
+
     # Decode using a specific config file
     python navtex_decode.py my_profile --config /path/to/myconfig.toml
 
@@ -53,7 +56,9 @@ navtex_session.SignalStrengthTracker).
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sqlite3
+from typing import Optional, Sequence
 
 from navtex_config import ConfigError, load_profile
 from navtex_outputs import ConsoleSink, OutputSink, SqliteLogSink, TextLogSink
@@ -71,7 +76,7 @@ def list_devices() -> None:
     print(sd.query_devices())
 
 
-def main() -> None:
+def main(argv: Optional[Sequence[str]] = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("profile", nargs="?",
                          help="Name of the [profile] section to load from the config file")
@@ -80,7 +85,14 @@ def main() -> None:
     parser.add_argument("--list-devices", action="store_true",
                          help="List available audio input devices and exit "
                               "(standalone diagnostic action -- ignores --config/profile)")
-    args = parser.parse_args()
+    parser.add_argument("-q", "--quiet", action="store_true", default=None,
+                         help="No status messages and no decoded text on the console; "
+                              "only errors are shown. Needs log_dir or db_file in the "
+                              "profile. Overrides the profile's quiet setting.")
+    parser.add_argument("--no-quiet", dest="quiet", action="store_false",
+                         help="Show status messages and decoded text even if the "
+                              "profile sets quiet = true")
+    args = parser.parse_args(argv)
 
     if args.list_devices:
         list_devices()
@@ -91,24 +103,32 @@ def main() -> None:
 
     try:
         profile = load_profile(args.config, args.profile)
+        if args.quiet is not None:
+            profile = dataclasses.replace(profile, quiet=args.quiet)
+            profile.validate()
     except ConfigError as e:
         parser.error(str(e))
 
+    def say(message: str) -> None:
+        """Status message: suppressed in quiet mode."""
+        if not profile.quiet:
+            print(message)
+
     source, description = open_source(profile, build_config(profile))
     if profile.mode == "live":
-        print(f"Listening on {description}... (Ctrl+C to stop)")
+        say(f"Listening on {description}... (Ctrl+C to stop)")
     else:
-        print(f"Decoding file: {profile.wav_file}")
+        say(f"Decoding file: {profile.wav_file}")
 
-    sinks: list[OutputSink] = [ConsoleSink()]
+    sinks: list[OutputSink] = [] if profile.quiet else [ConsoleSink()]
     try:
         if profile.log_dir:
             log = TextLogSink(profile.log_dir, description)
-            print(f"Logging decoded text to: {log.path}")
+            say(f"Logging decoded text to: {log.path}")
             sinks.append(log)
         if profile.db_file:
             db = SqliteLogSink(profile.db_file)
-            print(f"Logging decoded lines to database: {db.path}")
+            say(f"Logging decoded lines to database: {db.path}")
             sinks.append(db)
     except (OSError, sqlite3.Error) as e:
         for sink in sinks:
@@ -120,7 +140,7 @@ def main() -> None:
     try:
         session.run()   # returns at end of file; live decoding runs until Ctrl+C
     except KeyboardInterrupt:
-        print("\n\nStopped by user.")
+        say("\n\nStopped by user.")
 
 
 if __name__ == "__main__":
