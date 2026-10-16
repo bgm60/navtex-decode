@@ -141,6 +141,14 @@ strength reading from 00 to 99:
 If `db_file` is set, the timestamp, signal strength and text are also
 written to the named SQLite database.
 
+### Quiet mode
+
+For unattended running, `python navtex_decode.py live_518 -q` (or
+`quiet = true` in the profile) prints no status messages and no decoded
+text, so only the log file and/or database receive the output. Errors and
+warnings still appear on stderr. Quiet mode needs `log_dir` or `db_file`
+to be set. `--no-quiet` overrides `quiet = true` from the profile.
+
 ### Weak-signal lock
 
 For very weak or fading signals the weak-signal lock is on by default (`weak_signal_lock = true`; set it to `false` for the standard decoder). The decoder then finds

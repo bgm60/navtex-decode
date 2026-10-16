@@ -100,6 +100,10 @@ class Profile:
     device: Optional[Union[int, str]] = None  # index or name-substring; only used if mode == "live"
     log_dir: Optional[str] = None   # omit to disable logging
     db_file: Optional[str] = None   # SQLite database path; omit to disable database logging
+    # Command line only: no status messages and no decoded text on the
+    # console (errors and warnings still go to stderr). Needs log_dir or
+    # db_file, otherwise nothing at all would be output.
+    quiet: bool = False
 
     # --- Step 1: sampling/windowing (NavtexConfig) ---
     # Calibration values -- specific to a given receiver/SDR setup, not
@@ -169,6 +173,10 @@ class Profile:
             raise ConfigError(f"mode must be \"file\" or \"live\", got {self.mode!r}")
         if self.mode == "file" and not self.wav_file:
             raise ConfigError("mode = \"file\" requires wav_file to be set")
+        if self.quiet and not (self.log_dir or self.db_file):
+            raise ConfigError(
+                "quiet = true needs log_dir or db_file to be set, "
+                "otherwise the decoder would produce no output at all")
         if not isinstance(self.weak_signal_lock, bool):
             raise ConfigError(
                 f"weak_signal_lock must be true or false, got {self.weak_signal_lock!r}")
