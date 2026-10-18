@@ -1,3 +1,10 @@
+pub mod frontend;
+pub mod tone;
+pub mod window;
+
+#[cfg(test)]
+mod testutil;
+
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }
