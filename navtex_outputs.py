@@ -205,8 +205,8 @@ class ConsoleSink(OutputSink):
             pass
 
     def write(self, text: str) -> None:
-        self._stream.write(text)
-        self._stream.flush()
+       self._stream.write(text)
+       self._stream.flush()
 
 
 # ---------------------------------------------------------------------------
