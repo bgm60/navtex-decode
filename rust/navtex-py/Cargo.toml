@@ -1,0 +1,12 @@
+[package]
+name = "navtex-py"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "navtex_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+navtex-core = { path = "../navtex-core" }
+pyo3 = "0.29.0"

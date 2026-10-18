@@ -188,3 +188,7 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Rust
+#  Cargo puts its builds here, it can easily grow to 100s MB.
+rust/target/
