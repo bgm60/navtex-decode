@@ -88,7 +88,7 @@ mod tests {
     use super::*;
     use crate::testutil;
 
-    const SETS: [&str; 3] = ["synth_snr10_seed1", "synth_clean_seed2", "synth_fade_snr15"];
+    const SETS: [&str; 5] = ["synth_snr10_seed1", "synth_clean_seed2", "synth_fade_snr15", "real_clip1", "real_clip2"];
 
     /// Runs the whole signal through a fresh front end in chunks of `chunk_len`.
     fn run(samples: &[f32], chunk_len: usize) -> Vec<ToneSample> {

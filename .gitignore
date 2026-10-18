@@ -192,4 +192,4 @@ cython_debug/
 # Rust
 #  Cargo puts its builds here, it can easily grow to 100s MB.
 rust/target/
-rust/test-vectors
+
