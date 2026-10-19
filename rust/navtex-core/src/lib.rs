@@ -1,3 +1,5 @@
+pub mod bitsync;
+pub mod demod;
 pub mod frontend;
 pub mod tone;
 pub mod window;

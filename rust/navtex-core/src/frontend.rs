@@ -62,6 +62,12 @@ impl FrontEnd {
         }
     }
 
+    /// How far the bit-clock phase advances per frame: the hop divided by
+    /// the frame length (0.125 with the default settings).
+    pub fn phase_step(&self) -> f64 {
+        self.hop as f64 / self.window.len() as f64
+    }
+    
     /// Feeds in the next chunk of audio (mono, `f32`, any length) and
     /// returns one `ToneSample` for every frame that is now complete.
     pub fn push(&mut self, chunk: &[f32]) -> Vec<ToneSample> {
