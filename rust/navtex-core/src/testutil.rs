@@ -80,3 +80,53 @@ pub fn read_bits_csv(path: &str) -> Vec<(bool, f64, f64)> {
         })
         .collect()
 }
+
+/// Path of `combine_cases.csv`, which sits in the root of `test-vectors/`.
+pub fn combine_cases_path() -> String {
+    format!("{}/../test-vectors/combine_cases.csv", env!("CARGO_MANIFEST_DIR"))
+}
+
+/// One row of `combine_cases.csv`: a pair of received codes and what the
+/// Python combiner did with it.
+pub struct CombineRow {
+    pub seq: usize,
+    /// The hard decisions as the Python wrote them, e.g. "1110001".
+    pub dx: String,
+    pub rx: String,
+    pub dx_soft: [f64; 7],
+    pub rx_soft: [f64; 7],
+    /// The characters produced: empty, or one character.
+    pub out: String,
+    /// The shift state after this pair.
+    pub letters_mode: bool,
+}
+
+/// Reads `combine_cases.csv` (columns: seq, step, dx, rx, dx0..dx6, rx0..rx6,
+/// out, letters_mode). `out` holds Unicode code points as decimal numbers.
+pub fn read_combine_cases(path: &str) -> Vec<CombineRow> {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+    text.lines()
+        .skip(1) // header row
+        .map(|line| {
+            let f: Vec<&str> = line.split(',').collect();
+            assert_eq!(f.len(), 20, "expected 20 fields in {line:?}");
+            let floats = |from: usize| -> [f64; 7] {
+                std::array::from_fn(|i| f[from + i].parse::<f64>().expect("bad soft value"))
+            };
+            let out = f[18]
+                .split_whitespace()
+                .map(|n| char::from_u32(n.parse().expect("bad code point")).expect("bad char"))
+                .collect();
+            CombineRow {
+                seq: f[0].parse().expect("bad seq"),
+                dx: f[2].to_string(),
+                rx: f[3].to_string(),
+                dx_soft: floats(4),
+                rx_soft: floats(11),
+                out,
+                letters_mode: f[19] == "1",
+            }
+        })
+        .collect()
+}

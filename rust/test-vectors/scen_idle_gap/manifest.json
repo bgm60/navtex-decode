@@ -1,0 +1,145 @@
+{
+  "name": "scen_idle_gap",
+  "source": {
+    "kind": "scenario",
+    "scenario": "idle-gap",
+    "about": "idle signals between two messages (the junk filters)",
+    "snr_db": 6.0
+  },
+  "samples": 2715840,
+  "sample_rate": 48000,
+  "counts": {
+    "frames": 45257,
+    "bits": 5656
+  },
+  "front_end": {
+    "window_type": "hamming",
+    "window_size": 480,
+    "hop_size": 60,
+    "samples_per_symbol": 480,
+    "oversample": 8,
+    "mark_freq": 1785.0,
+    "space_freq": 1615.0,
+    "loop_gain": 0.05
+  },
+  "lock": {
+    "core": {
+      "params": {
+        "z_star": 5.0,
+        "window": 45,
+        "gap": 1.0,
+        "score_sd": 1.4168,
+        "cosine_null": [
+          0.0026,
+          0.3793
+        ],
+        "correlation_null": [
+          0.715,
+          0.1284
+        ],
+        "release_window": 30,
+        "release_z": 1.5,
+        "release_hold": 5,
+        "output_delay": 15,
+        "replay_margin": 10,
+        "follow": false,
+        "switch_window": 12,
+        "slip_z": 4.0,
+        "slip_margin": 2.0,
+        "switch_z": 5.0,
+        "switch_margin": 3.0,
+        "switch_hold": 3,
+        "own_release_hold": 25,
+        "max_letter_run": 0,
+        "ghost_hold": 0
+      },
+      "comparisons": 401,
+      "chars": 289,
+      "releases": 1,
+      "switches": 0
+    },
+    "follow": {
+      "params": {
+        "z_star": 5.0,
+        "window": 45,
+        "gap": 1.0,
+        "score_sd": 1.4168,
+        "cosine_null": [
+          0.0026,
+          0.3793
+        ],
+        "correlation_null": [
+          0.715,
+          0.1284
+        ],
+        "release_window": 30,
+        "release_z": 1.5,
+        "release_hold": 5,
+        "output_delay": 15,
+        "replay_margin": 10,
+        "follow": true,
+        "switch_window": 12,
+        "slip_z": 4.0,
+        "slip_margin": 2.0,
+        "switch_z": 5.0,
+        "switch_margin": 3.0,
+        "switch_hold": 3,
+        "own_release_hold": 25,
+        "max_letter_run": 0,
+        "ghost_hold": 0
+      },
+      "comparisons": 401,
+      "chars": 289,
+      "releases": 1,
+      "switches": 0
+    },
+    "full": {
+      "params": {
+        "z_star": 5.0,
+        "window": 45,
+        "gap": 1.0,
+        "score_sd": 1.4168,
+        "cosine_null": [
+          0.0026,
+          0.3793
+        ],
+        "correlation_null": [
+          0.715,
+          0.1284
+        ],
+        "release_window": 30,
+        "release_z": 1.5,
+        "release_hold": 5,
+        "output_delay": 15,
+        "replay_margin": 10,
+        "follow": true,
+        "switch_window": 12,
+        "slip_z": 4.0,
+        "slip_margin": 2.0,
+        "switch_z": 5.0,
+        "switch_margin": 3.0,
+        "switch_hold": 3,
+        "own_release_hold": 25,
+        "max_letter_run": 8,
+        "ghost_hold": 3
+      },
+      "comparisons": 401,
+      "chars": 281,
+      "releases": 1,
+      "switches": 0
+    }
+  },
+  "checks": {
+    "chunk_size_independent": true
+  },
+  "versions": {
+    "numpy": "2.5.1",
+    "scipy": "1.18.0",
+    "python": "3.14.6"
+  },
+  "notes": [
+    "The window is scipy's periodic ('fftbins=True') window, stored as float32; windowing multiplies float32 samples by float32 coefficients, and the tone detector then works in float64.",
+    "Frame count = floor((samples - window_size) / hop_size) + 1.",
+    "soft_value and confidence are sums of float64 diffs, added the way Python 3.12 and later sum() adds them (compensated)."
+  ]
+}

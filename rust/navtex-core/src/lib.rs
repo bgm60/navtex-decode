@@ -3,6 +3,8 @@ pub mod demod;
 pub mod frontend;
 pub mod tone;
 pub mod window;
+pub mod charset;
+pub mod combine;
 
 #[cfg(test)]
 mod testutil;

@@ -8,9 +8,7 @@
   "sample_rate": 48000,
   "counts": {
     "frames": 51415,
-    "bits": 6426,
-    "soft_lock_chars": 297,
-    "classic_chars": 271
+    "bits": 6426
   },
   "front_end": {
     "window_type": "hamming",
@@ -22,61 +20,112 @@
     "space_freq": 1615.0,
     "loop_gain": 0.05
   },
-  "profile": {
-    "mode": "live",
-    "wav_file": null,
-    "device": null,
-    "log_dir": null,
-    "db_file": null,
-    "quiet": false,
-    "sample_rate": 48000,
-    "oversample": 8,
-    "window_type": "hamming",
-    "centre_freq": 1700.0,
-    "tones_inverted": false,
-    "weak_signal_lock": true,
-    "loop_gain": 0.05,
-    "sync_window": 250,
-    "char_acquire_threshold": 0.6,
-    "char_drop_threshold": 0.46,
-    "char_switch_margin": 0.2,
-    "min_groups_for_acquire": 25,
-    "fec_acquire_threshold": 0.6,
-    "fec_switch_margin": 0.2,
-    "min_samples_for_rate": 5,
-    "rate_window": 30,
-    "lock_window": 15,
-    "phasing_burst_threshold": 4,
-    "signal_strength_window": 100
-  },
-  "soft_lock_params": {
-    "z_star": 5.0,
-    "window": 45,
-    "gap": 1.0,
-    "score_sd": 1.4168,
-    "cosine_null": [
-      0.0026,
-      0.3793
-    ],
-    "correlation_null": [
-      0.715,
-      0.1284
-    ],
-    "release_window": 30,
-    "release_z": 1.5,
-    "release_hold": 5,
-    "output_delay": 15,
-    "replay_margin": 10,
-    "follow": true,
-    "switch_window": 12,
-    "slip_z": 4.0,
-    "slip_margin": 2.0,
-    "switch_z": 5.0,
-    "switch_margin": 3.0,
-    "switch_hold": 3,
-    "own_release_hold": 25,
-    "max_letter_run": 8,
-    "ghost_hold": 3
+  "lock": {
+    "core": {
+      "params": {
+        "z_star": 5.0,
+        "window": 45,
+        "gap": 1.0,
+        "score_sd": 1.4168,
+        "cosine_null": [
+          0.0026,
+          0.3793
+        ],
+        "correlation_null": [
+          0.715,
+          0.1284
+        ],
+        "release_window": 30,
+        "release_z": 1.5,
+        "release_hold": 5,
+        "output_delay": 15,
+        "replay_margin": 10,
+        "follow": false,
+        "switch_window": 12,
+        "slip_z": 4.0,
+        "slip_margin": 2.0,
+        "switch_z": 5.0,
+        "switch_margin": 3.0,
+        "switch_hold": 3,
+        "own_release_hold": 25,
+        "max_letter_run": 0,
+        "ghost_hold": 0
+      },
+      "comparisons": 456,
+      "chars": 298,
+      "releases": 0,
+      "switches": 0
+    },
+    "follow": {
+      "params": {
+        "z_star": 5.0,
+        "window": 45,
+        "gap": 1.0,
+        "score_sd": 1.4168,
+        "cosine_null": [
+          0.0026,
+          0.3793
+        ],
+        "correlation_null": [
+          0.715,
+          0.1284
+        ],
+        "release_window": 30,
+        "release_z": 1.5,
+        "release_hold": 5,
+        "output_delay": 15,
+        "replay_margin": 10,
+        "follow": true,
+        "switch_window": 12,
+        "slip_z": 4.0,
+        "slip_margin": 2.0,
+        "switch_z": 5.0,
+        "switch_margin": 3.0,
+        "switch_hold": 3,
+        "own_release_hold": 25,
+        "max_letter_run": 0,
+        "ghost_hold": 0
+      },
+      "comparisons": 456,
+      "chars": 308,
+      "releases": 0,
+      "switches": 1
+    },
+    "full": {
+      "params": {
+        "z_star": 5.0,
+        "window": 45,
+        "gap": 1.0,
+        "score_sd": 1.4168,
+        "cosine_null": [
+          0.0026,
+          0.3793
+        ],
+        "correlation_null": [
+          0.715,
+          0.1284
+        ],
+        "release_window": 30,
+        "release_z": 1.5,
+        "release_hold": 5,
+        "output_delay": 15,
+        "replay_margin": 10,
+        "follow": true,
+        "switch_window": 12,
+        "slip_z": 4.0,
+        "slip_margin": 2.0,
+        "switch_z": 5.0,
+        "switch_margin": 3.0,
+        "switch_hold": 3,
+        "own_release_hold": 25,
+        "max_letter_run": 8,
+        "ghost_hold": 3
+      },
+      "comparisons": 456,
+      "chars": 297,
+      "releases": 0,
+      "switches": 1
+    }
   },
   "checks": {
     "chunk_size_independent": true
@@ -89,6 +138,6 @@
   "notes": [
     "The window is scipy's periodic ('fftbins=True') window, stored as float32; windowing multiplies float32 samples by float32 coefficients, and the tone detector then works in float64.",
     "Frame count = floor((samples - window_size) / hop_size) + 1.",
-    "soft_value and confidence are sums of float64 diffs taken in order."
+    "soft_value and confidence are sums of float64 diffs, added the way Python 3.12 and later sum() adds them (compensated)."
   ]
 }
