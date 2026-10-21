@@ -69,6 +69,15 @@ const CONTROL: [(Code, Control); 6] = [
     (0b0101011, Control::Blank),
 ];
 
+/// The 32 codes that carry traffic: 26 letters and 6 controls. The
+/// phasing signals are not included.
+pub fn traffic_codes() -> impl Iterator<Item = Code> {
+    TRAFFIC
+        .iter()
+        .map(|&(code, _, _)| code)
+        .chain(CONTROL.iter().map(|&(code, _)| code))
+}
+
 /// The number of 1-bits in a code. A valid code has weight 4.
 pub fn weight(code: Code) -> u32 {
     code.count_ones()
@@ -123,6 +132,13 @@ mod tests {
         codes.sort();
         codes.dedup();
         assert_eq!(codes.len(), 32, "a code appears twice");
+    }
+
+    #[test]
+    fn traffic_codes_lists_the_32_codes_without_phasing() {
+        let codes: Vec<Code> = traffic_codes().collect();
+        assert_eq!(codes.len(), 32);
+        assert!(!codes.contains(&PHASING_1) && !codes.contains(&PHASING_2));
     }
 
     #[test]

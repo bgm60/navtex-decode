@@ -130,3 +130,57 @@ pub fn read_combine_cases(path: &str) -> Vec<CombineRow> {
         })
         .collect()
 }
+
+/// Reads the score columns of a `lock_*_trace.csv` (columns: bin, s0..s13,
+/// then state columns): one row of 14 scores per comparison, in order.
+pub fn read_trace_scores(path: &str) -> Vec<[f64; 14]> {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+    text.lines()
+        .skip(1) // header row
+        .enumerate()
+        .map(|(row, line)| {
+            let mut fields = line.split(',');
+            let bin: usize = fields.next().expect("missing bin").parse().expect("bad bin");
+            assert_eq!(bin, row, "{path}: comparison numbers should count up from 0");
+            std::array::from_fn(|_| {
+                fields.next().expect("missing score").parse::<f64>().expect("bad score")
+            })
+        })
+        .collect()
+}
+
+/// The lock state after one comparison, from the later columns of a
+/// `lock_*_trace.csv`.
+#[derive(Debug, PartialEq)]
+pub struct TraceState {
+    pub locked: bool,
+    /// The locked hypothesis, or -1 when not locked.
+    pub h: i64,
+    pub releases: usize,
+    pub switches: usize,
+    pub pending: usize,
+    pub emitted: usize,
+}
+
+/// Reads the state columns of a `lock_*_trace.csv` (columns after the 14
+/// scores: locked, h, releases, switches, pending, emitted).
+pub fn read_trace_states(path: &str) -> Vec<TraceState> {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+    text.lines()
+        .skip(1) // header row
+        .map(|line| {
+            let f: Vec<&str> = line.split(',').collect();
+            assert_eq!(f.len(), 21, "expected 21 fields in {line:?}");
+            TraceState {
+                locked: f[15] == "1",
+                h: f[16].parse().expect("bad h"),
+                releases: f[17].parse().expect("bad releases"),
+                switches: f[18].parse().expect("bad switches"),
+                pending: f[19].parse().expect("bad pending"),
+                emitted: f[20].parse().expect("bad emitted"),
+            }
+        })
+        .collect()
+}
