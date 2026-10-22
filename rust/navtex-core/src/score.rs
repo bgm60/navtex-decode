@@ -85,7 +85,7 @@ pub fn comparison_score(x: &[f64; 7], y: &[f64; 7], params: &SoftLockParams) -> 
 /// Seven consecutive soft values starting at decision number `start`.
 /// `soft[0]` is decision number `base` (older decisions may have been
 /// discarded to save memory).
-fn group(soft: &[f64], base: usize, start: usize) -> [f64; 7] {
+pub(crate) fn group(soft: &[f64], base: usize, start: usize) -> [f64; 7] {
     std::array::from_fn(|k| soft[start + k - base])
 }
 
@@ -142,6 +142,16 @@ impl ScoreWindow {
     /// Forgets every row, so the window starts again from empty.
     pub fn clear(&mut self) {
         self.rows.clear();
+    }
+
+    /// Rows currently held.
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// One hypothesis's scores over the window, oldest first.
+    pub fn column(&self, h: usize) -> Vec<f64> {
+        self.rows.iter().map(|row| row[h]).collect()
     }
 
     pub fn is_full(&self) -> bool {
@@ -292,11 +302,8 @@ mod tests {
     fn matches_the_python_scores_for_every_reference_set() {
         let params = params();
         let mut checked = 0;
-        for set in testutil::reference_sets() {
+        for set in testutil::lock_sets() {
             let trace_path = testutil::vector_path(&set, "lock_core_trace.csv");
-            if !std::path::Path::new(&trace_path).is_file() {
-                continue;
-            }
             let soft: Vec<f64> =
                 testutil::read_bits_csv(&testutil::vector_path(&set, "bits.csv"))
                     .iter()

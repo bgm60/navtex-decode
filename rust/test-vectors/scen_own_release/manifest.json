@@ -1,0 +1,135 @@
+{
+  "name": "scen_own_release",
+  "source": {
+    "kind": "soft-scenario",
+    "scenario": "own-release",
+    "about": "a locked signal slips one bit and weakens: the locked alignment alone stays low while its neighbour stays moderate (the last-resort release rule)",
+    "seed": 11,
+    "strong": 4.0,
+    "weak": 0.8,
+    "noise_sd": 2.0,
+    "slip_after_decision": 1995,
+    "noise_tail": 1500
+  },
+  "counts": {
+    "bits": 5491
+  },
+  "lock": {
+    "core": {
+      "params": {
+        "z_star": 5.0,
+        "window": 45,
+        "gap": 1.0,
+        "score_sd": 1.4168,
+        "cosine_null": [
+          0.0026,
+          0.3793
+        ],
+        "correlation_null": [
+          0.715,
+          0.1284
+        ],
+        "release_window": 30,
+        "release_z": 1.5,
+        "release_hold": 5,
+        "output_delay": 15,
+        "replay_margin": 10,
+        "follow": false,
+        "switch_window": 12,
+        "slip_z": 4.0,
+        "slip_margin": 2.0,
+        "switch_z": 5.0,
+        "switch_margin": 3.0,
+        "switch_hold": 3,
+        "own_release_hold": 25,
+        "max_letter_run": 0,
+        "ghost_hold": 0
+      },
+      "comparisons": 389,
+      "chars": 211,
+      "releases": 1,
+      "switches": 0,
+      "own_alignment_releases": 0
+    },
+    "follow": {
+      "params": {
+        "z_star": 5.0,
+        "window": 45,
+        "gap": 1.0,
+        "score_sd": 1.4168,
+        "cosine_null": [
+          0.0026,
+          0.3793
+        ],
+        "correlation_null": [
+          0.715,
+          0.1284
+        ],
+        "release_window": 30,
+        "release_z": 1.5,
+        "release_hold": 5,
+        "output_delay": 15,
+        "replay_margin": 10,
+        "follow": true,
+        "switch_window": 12,
+        "slip_z": 4.0,
+        "slip_margin": 2.0,
+        "switch_z": 5.0,
+        "switch_margin": 3.0,
+        "switch_hold": 3,
+        "own_release_hold": 25,
+        "max_letter_run": 0,
+        "ghost_hold": 0
+      },
+      "comparisons": 389,
+      "chars": 206,
+      "releases": 1,
+      "switches": 0,
+      "own_alignment_releases": 1
+    },
+    "full": {
+      "params": {
+        "z_star": 5.0,
+        "window": 45,
+        "gap": 1.0,
+        "score_sd": 1.4168,
+        "cosine_null": [
+          0.0026,
+          0.3793
+        ],
+        "correlation_null": [
+          0.715,
+          0.1284
+        ],
+        "release_window": 30,
+        "release_z": 1.5,
+        "release_hold": 5,
+        "output_delay": 15,
+        "replay_margin": 10,
+        "follow": true,
+        "switch_window": 12,
+        "slip_z": 4.0,
+        "slip_margin": 2.0,
+        "switch_z": 5.0,
+        "switch_margin": 3.0,
+        "switch_hold": 3,
+        "own_release_hold": 25,
+        "max_letter_run": 8,
+        "ghost_hold": 3
+      },
+      "comparisons": 389,
+      "chars": 206,
+      "releases": 1,
+      "switches": 0,
+      "own_alignment_releases": 1
+    }
+  },
+  "versions": {
+    "numpy": "2.5.1",
+    "scipy": "1.18.0",
+    "python": "3.14.6"
+  },
+  "notes": [
+    "Built from soft values; there is no audio, window.csv or tone.csv."
+  ]
+}

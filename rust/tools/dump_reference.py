@@ -15,6 +15,7 @@ Usage (run from anywhere; the decoder modules are found in the repo root):
     python rust/tools/dump_reference.py synth --name synth_snr10_seed1 --seed 1 --snr 10
     python rust/tools/dump_reference.py wav my_recording.wav --name real_clip1
     python rust/tools/dump_reference.py scenario slip-drop --name scen_slip_drop
+    python rust/tools/dump_reference.py soft-scenario own-release --name scen_own_release
     python rust/tools/dump_reference.py combine-cases
 
 Output goes to rust/test-vectors/<name>/ (change the root with --out).
@@ -54,6 +55,13 @@ releases and switches are running totals; pending is the number of
 characters held back; emitted the number released so far (by the end of
 the comparison, not counting the final flush at the end of the stream).
 
+Soft scenarios
+--------------
+A soft scenario (command soft-scenario) is built straight from soft values
+instead of audio, so that it can create a situation the audio route cannot
+easily produce. It writes bits.csv, the lock files and manifest.json, but no
+audio, window.csv or tone.csv, so only the lock stages can be tested with it.
+
 Other file
 ----------
 combine_cases.csv    (from the combine-cases command; one file in the root
@@ -83,6 +91,7 @@ import dataclasses
 import json
 import sys
 from collections import Counter
+from types import SimpleNamespace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -106,6 +115,11 @@ LOCK_VARIANTS = {
     "core": SoftLockParams(follow=False, max_letter_run=0, ghost_hold=0),
     "follow": SoftLockParams(follow=True, max_letter_run=0, ghost_hold=0),
     "full": SoftLockParams(),
+}
+
+SOFT_SCENARIOS = {
+    "own-release": "a locked signal slips one bit and weakens: the locked alignment alone stays "
+                   "low while its neighbour stays moderate (the last-resort release rule)",
 }
 
 SCENARIOS = {
@@ -153,11 +167,18 @@ class TracingSoftLock(SoftLockDecoder):
         self.trace = []
         self._emitted = 0
         self._last_scores = None
+        self.own_releases = 0        # releases caused by the last-resort rule alone
 
     def _bin_scores(self, b):
         scores = super()._bin_scores(b)
         self._last_scores = scores
         return scores
+
+    def _maybe_release(self, b):
+        before = self.releases
+        yield from super()._maybe_release(b)
+        if self.releases > before and self._low_run < self.params.release_hold:
+            self.own_releases += 1
 
     def _step(self, b):
         for item in super()._step(b):
@@ -322,8 +343,94 @@ def write_lock_files(out, variant, decoder, events):
 
 
 # ---------------------------------------------------------------------------
+# Soft scenarios (built from soft values, not audio)
+# ---------------------------------------------------------------------------
+
+def soft_decisions(soft):
+    """Bit decisions made from soft values alone."""
+    return [SimpleNamespace(bit=bool(v >= 0.0), confidence=min(1.0, abs(v) / 8.0),
+                            soft_value=float(v)) for v in soft]
+
+
+def soft_scenario(kind, profile):
+    """Returns (decisions, info). Fixed settings, searching a fixed range of
+    seeds for the first that produces the intended situation, so that the
+    result does not depend on luck with one noise sequence."""
+    if kind != "own-release":
+        raise SystemExit(f"unknown soft scenario {kind}")
+    tx = make_tx(profile, 12, 4)
+    bits = tx.bits.astype(float) * 2.0 - 1.0
+    cut = len(bits) // 2
+    strong, weak, sd, tail = 4.0, 0.8, 2.0, 1500
+    for seed in range(60):
+        rng = np.random.default_rng(seed)
+        # the first half strong; then one extra decision (a bit slip) and
+        # the rest weak; then noise only
+        soft = np.concatenate([bits[:cut] * strong, [0.0], bits[cut:] * weak, np.zeros(tail)])
+        soft = soft + rng.normal(0.0, sd, len(soft))
+        decisions = soft_decisions(soft)
+        decoder, _ = run_lock(decisions, LOCK_VARIANTS["follow"])
+        if decoder.own_releases > 0 and decoder.switches == 0:
+            info = {"kind": "soft-scenario", "scenario": kind, "about": SOFT_SCENARIOS[kind],
+                    "seed": seed, "strong": strong, "weak": weak, "noise_sd": sd,
+                    "slip_after_decision": cut, "noise_tail": tail}
+            return decisions, info
+    raise SystemExit("no seed in 0..59 produced the intended situation; "
+                     "the soft scenario needs retuning")
+
+
+# ---------------------------------------------------------------------------
 # The capture of one signal
 # ---------------------------------------------------------------------------
+
+def capture_lock(out, decisions):
+    """Runs the three lock variants over the bit decisions and writes the
+    files for each. Returns a summary for the manifest."""
+    summary = {}
+    for variant, params in LOCK_VARIANTS.items():
+        decoder, events = run_lock(decisions, params)
+        write_lock_files(out, variant, decoder, events)
+        summary[variant] = {
+            "params": dataclasses.asdict(params),
+            "comparisons": len(decoder.trace),
+            "chars": len(events),
+            "releases": decoder.releases,
+            "switches": decoder.switches,
+            "own_alignment_releases": decoder.own_releases,
+        }
+    return summary
+
+
+def print_lock_summary(summary):
+    for variant, s in summary.items():
+        print(f"  lock {variant:6s} {s['comparisons']:4d} comparisons, {s['chars']:4d} chars, "
+              f"{s['releases']} releases ({s['own_alignment_releases']} by the own-alignment rule), "
+              f"{s['switches']} switches")
+    removed = summary["follow"]["chars"] - summary["full"]["chars"]
+    print(f"  the junk filters removed {removed} characters")
+
+
+def capture_soft(decisions, source_info, name, out_root, profile):
+    out = out_root / name
+    out.mkdir(parents=True, exist_ok=True)
+    write_csv(out / "bits.csv", ["bit_index", "bit", "confidence", "soft_value"],
+              ((i, int(d.bit), num(d.confidence), num(d.soft_value))
+               for i, d in enumerate(decisions)))
+    summary = capture_lock(out, decisions)
+    manifest = {
+        "name": name,
+        "source": source_info,
+        "counts": {"bits": len(decisions)},
+        "lock": summary,
+        "versions": {"numpy": np.__version__, "scipy": scipy.__version__,
+                     "python": sys.version.split()[0]},
+        "notes": ["Built from soft values; there is no audio, window.csv or tone.csv."],
+    }
+    write_text(out / "manifest.json", json.dumps(manifest, indent=2) + "\n")
+    print(f"{name}: {len(decisions)} bits (soft scenario, seed {source_info['seed']})")
+    print_lock_summary(summary)
+    print(f"  written to {out}")
+    return 0
 
 def capture(audio, source_info, name, out_root, profile):
     config = build_config(profile)
@@ -355,19 +462,7 @@ def capture(audio, source_info, name, out_root, profile):
             print(f"WARNING: chunk size {size} gives different front-end results", file=sys.stderr)
 
     # 4. The weak-signal lock, in its three layers.
-    lock_summary = {}
-    results = {}
-    for variant, params in LOCK_VARIANTS.items():
-        decoder, events = run_lock(decisions, params)
-        results[variant] = (decoder, events)
-        write_lock_files(out, variant, decoder, events)
-        lock_summary[variant] = {
-            "params": dataclasses.asdict(params),
-            "comparisons": len(decoder.trace),
-            "chars": len(events),
-            "releases": decoder.releases,
-            "switches": decoder.switches,
-        }
+    lock_summary = capture_lock(out, decisions)
 
     # 5. The front-end files and the manifest.
     window = Windower(config)._window_fn
@@ -411,11 +506,7 @@ def capture(audio, source_info, name, out_root, profile):
     write_text(out / "manifest.json", json.dumps(manifest, indent=2) + "\n")
 
     print(f"{name}: {len(stored)} samples, {len(tones)} frames, {len(decisions)} bits")
-    for variant, s in lock_summary.items():
-        print(f"  lock {variant:6s} {s['comparisons']:4d} comparisons, {s['chars']:4d} chars, "
-              f"{s['releases']} releases, {s['switches']} switches")
-    removed = lock_summary["follow"]["chars"] - lock_summary["full"]["chars"]
-    print(f"  the junk filters removed {removed} characters")
+    print_lock_summary(lock_summary)
     print(f"  chunk-size independent: {chunking_ok}")
     print(f"  written to {out}")
     return 0 if chunking_ok else 1
@@ -515,6 +606,11 @@ def parse_args(argv):
                    help="; ".join(f"{k}: {v}" for k, v in sorted(SCENARIOS.items())))
     c.add_argument("--name", required=True, help="name of the output folder")
 
+    q = sub.add_parser("soft-scenario", help="a situation built from soft values, without audio")
+    q.add_argument("kind", choices=sorted(SOFT_SCENARIOS),
+                   help="; ".join(f"{k}: {v}" for k, v in sorted(SOFT_SCENARIOS.items())))
+    q.add_argument("--name", required=True, help="name of the output folder")
+
     k = sub.add_parser("combine-cases", help="cases for the soft combining rule")
     k.add_argument("--seed", type=int, default=1, help="random seed (default 1)")
     k.add_argument("--sequences", type=int, default=30, help="number of sequences (default 30)")
@@ -528,6 +624,9 @@ def main(argv=None):
         return make_combine_cases(args, args.out)
 
     profile = Profile()                      # the decoder's current defaults
+    if args.command == "soft-scenario":
+        decisions, source_info = soft_scenario(args.kind, profile)
+        return capture_soft(decisions, source_info, args.name, args.out, profile)
     config = build_config(profile)
     if args.command == "synth":
         audio, source_info = synthetic_audio(args, profile)

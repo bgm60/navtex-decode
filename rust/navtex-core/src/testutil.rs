@@ -24,6 +24,25 @@ pub fn reference_sets() -> Vec<String> {
     names
 }
 
+/// The names of every set in `test-vectors/` that has a `bits.csv` and the
+/// lock files, in alphabetical order. This includes sets built from soft
+/// values alone (no audio), which `reference_sets` leaves out.
+pub fn lock_sets() -> Vec<String> {
+    let root = format!("{}/../test-vectors", env!("CARGO_MANIFEST_DIR"));
+    let entries = std::fs::read_dir(&root).unwrap_or_else(|e| panic!("cannot read {root}: {e}"));
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.path().join("bits.csv").is_file()
+                && entry.path().join("lock_core_trace.csv").is_file()
+        })
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    assert!(!names.is_empty(), "no lock sets found in {root}");
+    names
+}
+
 /// Reads a 16-bit mono WAV file as `f32` values (each sample divided by
 /// 32768), which is how the Python decoder reads it.
 pub fn read_wav(path: &str) -> Vec<f32> {
@@ -181,6 +200,30 @@ pub fn read_trace_states(path: &str) -> Vec<TraceState> {
                 pending: f[19].parse().expect("bad pending"),
                 emitted: f[20].parse().expect("bad emitted"),
             }
+        })
+        .collect()
+}
+
+/// Reads a `lock_*_chars.csv` (columns: seq, bit_index, codepoints) as
+/// `(bit_index, text)` pairs, where `text` is the character(s) as a String.
+pub fn read_lock_chars(path: &str) -> Vec<(usize, String)> {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+    text.lines()
+        .skip(1) // header row
+        .enumerate()
+        .map(|(row, line)| {
+            let mut fields = line.split(',');
+            let seq: usize = fields.next().expect("missing seq").parse().expect("bad seq");
+            assert_eq!(seq, row, "{path}: seq should count up from 0");
+            let bit_index = fields.next().expect("missing bit_index").parse().expect("bad index");
+            let chars = fields
+                .next()
+                .expect("missing codepoints")
+                .split_whitespace()
+                .map(|n| char::from_u32(n.parse().expect("bad code point")).expect("bad char"))
+                .collect();
+            (bit_index, chars)
         })
         .collect()
 }
