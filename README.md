@@ -149,6 +149,14 @@ text, so only the log file and/or database receive the output. Errors and
 warnings still appear on stderr. Quiet mode needs `log_dir` or `db_file`
 to be set. `--no-quiet` overrides `quiet = true` from the profile.
 
+### Rust engine
+
+`engine = "rust"` (or `--engine rust`) swaps the Python decoder for the Rust one
+in `rust/`, which gives the same text about five times faster. Build it once
+with `maturin develop --release` in `rust/navtex-py` inside your virtual
+environment. It needs the default weak-signal lock, Hamming window and 8x
+oversampling. Python stays the default engine.
+
 ### Weak-signal lock
 
 For very weak or fading signals the weak-signal lock is on by default (`weak_signal_lock = true`; set it to `false` for the standard decoder). The decoder then finds

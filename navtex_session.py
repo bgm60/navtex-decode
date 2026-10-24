@@ -29,6 +29,10 @@ example to drive meters:
     session.tracker.level         00-99 signal-strength reading
     session.audio_level.peak_dbfs  audio input peak level, dB full scale
     session.sync_state             "searching", "sync" or "data"
+
+The profile's `engine` chooses the decoder: "python" (the default) or
+"rust", the faster Rust decoder in the navtex_rs module, which produces the
+same text. See RustLockStatus.
 """
 
 from __future__ import annotations
@@ -36,11 +40,11 @@ from __future__ import annotations
 import math
 import time
 from collections import deque
-from typing import Callable, Deque, Iterable, Iterator, Optional, Tuple
+from typing import Callable, Deque, Iterable, Iterator, Optional, Tuple, Union
 
 import numpy as np
 
-from navtex_config import Profile
+from navtex_config import ConfigError, Profile
 from navtex_outputs import LineAssembler, OutputSink, WarnFn, warn_to_stderr
 from navtex_soft_fec_combine import (
     SoftBitSync,
@@ -253,6 +257,70 @@ def build_soft_lock(profile: Profile) -> SoftLockDecoder:
     return SoftLockDecoder(SoftLockParams())
 
 
+class RustLockStatus:
+    """Wraps the Rust decoder (navtex_rs.Decoder) and looks like the Python
+    weak-signal lock to DecodeSession: `state` and `releases`.
+
+    `releases` is set to the release number of each character just before
+    that character is delivered, so DecodeSession starts a new line when a
+    new message begins, exactly as it does with the Python lock.
+    """
+
+    def __init__(self, decoder):
+        self.decoder = decoder
+        self.releases = 0
+
+    @property
+    def state(self) -> str:
+        return self.decoder.state
+
+
+def build_rust_lock(profile: Profile) -> RustLockStatus:
+    """The Rust decoder for a profile whose engine is "rust"."""
+    try:
+        import navtex_rs
+    except ImportError as e:
+        raise ConfigError(
+            "engine = \"rust\" needs the navtex_rs module: build it with "
+            "'maturin develop --release' in rust/navtex-py") from e
+    return RustLockStatus(navtex_rs.Decoder(
+        sample_rate=profile.sample_rate,
+        mark_freq=profile.mark_freq,
+        space_freq=profile.space_freq,
+        oversample=profile.oversample,
+        loop_gain=profile.loop_gain,
+    ))
+
+
+def _decode_characters_rust(source: AudioSource, tracker: SignalStrengthTracker,
+                            rust_lock: RustLockStatus,
+                            audio_level: Optional[AudioLevelMeter],
+                            bit_hook: Optional[Callable[[], None]],
+                            hook_every: int) -> Iterator[str]:
+    """The Rust engine's version of the pipeline: audio chunks in, decoded
+    characters out. The tracker, meter and hook are updated as they are
+    with the Python engine, but once per chunk rather than once per bit."""
+    decoder = rust_lock.decoder
+    chunks = source.chunks() if audio_level is None else tap_chunks(source, audio_level)
+    bits_since_hook = 0
+    for chunk in chunks:
+        events = decoder.push(np.ascontiguousarray(chunk, dtype=np.float32))
+        confidences = decoder.take_confidences()
+        for confidence in confidences:
+            tracker.update(confidence)
+        if bit_hook is not None:
+            bits_since_hook += len(confidences)
+            if bits_since_hook >= hook_every:
+                bits_since_hook = 0
+                bit_hook()
+        for ch, _bit_index, releases in events:
+            rust_lock.releases = releases
+            yield ch
+    for ch, _bit_index, releases in decoder.finish():
+        rust_lock.releases = releases
+        yield ch
+
+
 def decode_characters(source: AudioSource, profile: Profile,
                       tracker: SignalStrengthTracker,
                       grouper: Optional[SoftCharacterGrouper] = None,
@@ -260,7 +328,8 @@ def decode_characters(source: AudioSource, profile: Profile,
                       audio_level: Optional[AudioLevelMeter] = None,
                       bit_hook: Optional[Callable[[], None]] = None,
                       hook_every: int = 50,
-                      soft_lock: Optional[SoftLockDecoder] = None) -> Iterator[str]:
+                      soft_lock: Optional[Union[SoftLockDecoder, "RustLockStatus"]] = None
+                      ) -> Iterator[str]:
     """The full Step 1-4 pipeline: audio in, decoded characters out.
     Updates `tracker` with every bit decision along the way, and
     `audio_level` (if given) with every audio chunk, and calls `bit_hook`
@@ -268,6 +337,10 @@ def decode_characters(source: AudioSource, profile: Profile,
     the profile unless supplied (DecodeSession supplies its own so it can
     report their status). If the profile's weak_signal_lock is true,
     `soft_lock` (built from the profile unless supplied) replaces both."""
+    if profile.engine == "rust":
+        rust_lock = soft_lock if isinstance(soft_lock, RustLockStatus) else build_rust_lock(profile)
+        return _decode_characters_rust(source, tracker, rust_lock, audio_level,
+                                       bit_hook, hook_every)
     config = build_config(profile)
     windower = Windower(config)
     detector = ToneDetector(config)
@@ -335,7 +408,10 @@ class DecodeSession:
         self.tracker = SignalStrengthTracker(window=profile.signal_strength_window)
         self.audio_level = AudioLevelMeter()
         self.sync_state = "searching"
-        self._soft_lock = build_soft_lock(profile) if weak_signal_lock_enabled(profile) else None
+        if profile.engine == "rust":
+            self._soft_lock = build_rust_lock(profile)
+        else:
+            self._soft_lock = build_soft_lock(profile) if weak_signal_lock_enabled(profile) else None
         self._grouper = build_grouper(profile)
         self._fec = build_fec(profile)
         self._sinks = list(sinks)

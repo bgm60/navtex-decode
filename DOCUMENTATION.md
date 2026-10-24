@@ -448,6 +448,12 @@ decoder with a clear error message rather than a traceback:
 | Parameter | Default | Description |
 |---|---|---|
 | `weak_signal_lock` | `true` | `true` uses the weak-signal lock; `false` uses the standard character-sync and FEC locks. |
+| `engine` | `"python"` | `"python"` or `"rust"`. `"rust"` runs the whole front end and weak-signal lock in the Rust module `navtex_rs`, about five times faster, with the same text. It needs `weak_signal_lock = true`, `window_type = "hamming"` and `oversample = 8` (the defaults), and the module built with `maturin develop --release` in `rust/navtex-py`. Also available as `--engine rust` on the command line. |
+
+With `engine = "rust"` the signal-strength meter is updated a chunk of
+audio at a time rather than bit by bit, so the figure shown at the start of
+a line can differ by a few points from the Python engine. The text and line
+breaks are identical.
 
 SITOR-B sends every character twice, five slots apart. The weak-signal
 lock exploits this: for each of 14 hypotheses (7 bit phases times the two

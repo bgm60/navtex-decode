@@ -125,6 +125,14 @@ class Profile:
     # "sensitive"; those are rejected -- use true or false.)
     weak_signal_lock: bool = True
 
+    # --- Decoding engine ---
+    # "python" (the default) uses the Python decoder; "rust" uses the Rust
+    # decoder (the navtex_rs module, built from rust/navtex-py), which
+    # gives the same text much faster. The Rust decoder implements only the
+    # weak-signal lock, the Hamming window and 8x oversampling, so "rust"
+    # needs weak_signal_lock = true, window_type = "hamming" and oversample = 8.
+    engine: str = "python"
+
     # --- Step 3: bit-clock recovery (BitSync) ---
     loop_gain: float = 0.05
 
@@ -180,6 +188,15 @@ class Profile:
         if not isinstance(self.weak_signal_lock, bool):
             raise ConfigError(
                 f"weak_signal_lock must be true or false, got {self.weak_signal_lock!r}")
+        if self.engine not in ("python", "rust"):
+            raise ConfigError(f"engine must be \"python\" or \"rust\", got {self.engine!r}")
+        if self.engine == "rust":
+            if not self.weak_signal_lock:
+                raise ConfigError("engine = \"rust\" needs weak_signal_lock = true "
+                                  "(the Rust decoder has only the weak-signal lock)")
+            if self.window_type != "hamming" or self.oversample != 8:
+                raise ConfigError("engine = \"rust\" needs window_type = \"hamming\" and "
+                                  "oversample = 8 (the only values the Rust decoder implements)")
 
         # Both tones must be above 0 Hz and below the Nyquist frequency
         # (half the sample rate), or the tone detector cannot see them.

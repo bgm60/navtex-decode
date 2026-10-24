@@ -4,9 +4,9 @@
 //! import navtex_rs
 //! decoder = navtex_rs.Decoder()
 //! for chunk in audio_chunks:                    # mono float32 arrays
-//!     for ch, bit_index in decoder.push(chunk):
+//!     for ch, bit_index, releases in decoder.push(chunk):
 //!         print(ch, end="")
-//! for ch, bit_index in decoder.finish():
+//! for ch, bit_index, releases in decoder.finish():
 //!     print(ch, end="")
 //! ```
 
@@ -67,10 +67,13 @@ mod navtex_rs {
 
         /// Feeds in a chunk of mono float32 audio (a numpy array, or anything
         /// with the buffer protocol). Returns a list of (character,
-        /// bit_index) pairs for the characters that became ready. Audio of
+        /// bit_index, releases) triples for the characters that became ready.
+        /// `releases` is how many locks had been released before the
+        /// character came out: when it changes, a new message has begun.
+        /// Audio of
         /// another type, such as float64, raises BufferError: convert it
         /// first with `.astype(numpy.float32)`.
-        fn push(&mut self, py: Python<'_>, samples: PyBuffer<f32>) -> PyResult<Vec<(String, usize)>> {
+        fn push(&mut self, py: Python<'_>, samples: PyBuffer<f32>) -> PyResult<Vec<(String, usize, usize)>> {
             let audio = samples.to_vec(py)?;
             // Decoding does not need Python, so let other Python threads run.
             let events = py.detach(|| self.inner.push(&audio));
@@ -78,7 +81,7 @@ mod navtex_rs {
         }
 
         /// Call at the end of the audio: returns what is still held back.
-        fn finish(&mut self, py: Python<'_>) -> Vec<(String, usize)> {
+        fn finish(&mut self, py: Python<'_>) -> Vec<(String, usize, usize)> {
             to_pairs(py.detach(|| self.inner.finish()))
         }
 
@@ -107,7 +110,7 @@ mod navtex_rs {
         }
     }
 
-    fn to_pairs(events: Vec<navtex_core::softlock::LockEvent>) -> Vec<(String, usize)> {
-        events.into_iter().map(|e| (e.ch.to_string(), e.bit_index)).collect()
+    fn to_pairs(events: Vec<navtex_core::softlock::LockEvent>) -> Vec<(String, usize, usize)> {
+        events.into_iter().map(|e| (e.ch.to_string(), e.bit_index, e.releases)).collect()
     }
 }

@@ -91,15 +91,18 @@ def check_set(set_dir):
     for chunk in CHUNK_SIZES:
         label = f"{name}, chunk {chunk or 'whole file'}"
         events, confidences, states, decoder = run(audio, chunk, collect_confidences=(reference is None))
-        got = [(pos, ch) for ch, pos in events]
+        got = [(pos, ch) for ch, pos, _ in events]
         check(got == want_chars, f"{label}: characters differ from the Python decoder "
                                  f"({len(got)} against {len(want_chars)})")
-        text = "".join(ch for ch, _ in events).replace("\r", "")
+        text = "".join(ch for ch, _, _ in events).replace("\r", "")
         check(text == want_text, f"{label}: decoded text differs")
         check(decoder.releases == manifest["releases"],
               f"{label}: releases {decoder.releases} against {manifest['releases']}")
         check(decoder.switches == manifest["switches"],
               f"{label}: switches {decoder.switches} against {manifest['switches']}")
+        numbers = [n for _, _, n in events]
+        check(numbers == sorted(numbers) and (not numbers or numbers[-1] <= decoder.releases),
+              f"{label}: release numbers should never go down and end at or below {decoder.releases}")
         check(decoder.state == "searching", f"{label}: state after finish is {decoder.state}")
         if want_chars and chunk is not None:     # a single call only shows the state at its end
             check("data" in states, f"{label}: never reported the state 'data'")

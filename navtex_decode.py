@@ -92,6 +92,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument("--no-quiet", dest="quiet", action="store_false",
                          help="Show status messages and decoded text even if the "
                               "profile sets quiet = true")
+    parser.add_argument("--engine", choices=("python", "rust"), default=None,
+                         help="Decoding engine: the Python decoder or the faster Rust decoder "
+                              "(needs the navtex_rs module). Overrides the profile's engine setting.")
     args = parser.parse_args(argv)
 
     if args.list_devices:
@@ -105,9 +108,19 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         profile = load_profile(args.config, args.profile)
         if args.quiet is not None:
             profile = dataclasses.replace(profile, quiet=args.quiet)
+        if args.engine is not None:
+            profile = dataclasses.replace(profile, engine=args.engine)
+        if args.quiet is not None or args.engine is not None:
             profile.validate()
     except ConfigError as e:
         parser.error(str(e))
+
+    if profile.engine == "rust":
+        try:
+            import navtex_rs  # noqa: F401  (only checking that it is installed)
+        except ImportError:
+            parser.error("engine = \"rust\" needs the navtex_rs module: build it with "
+                         "'maturin develop --release' in rust/navtex-py")
 
     def say(message: str) -> None:
         """Status message: suppressed in quiet mode."""

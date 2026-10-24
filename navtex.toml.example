@@ -40,6 +40,7 @@ min_groups_for_acquire = 25
 [weak_signal]
 mode = "live"
 weak_signal_lock = true
+# engine = "rust"   # faster Rust decoder (needs the navtex_rs module; see README)
 
 # --- A conservative/strict profile: slower acquisition, more resistant
 # to false-locking on noise. Useful for a strong, clean signal where

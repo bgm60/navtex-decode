@@ -101,6 +101,11 @@ pub struct LockEvent {
     /// Number of the first bit decision of the repeat group that produced
     /// the character, counting from the start of the stream.
     pub bit_index: usize,
+    /// How many locks had been released before this character came out.
+    /// The characters of one lock (one message) share a number; the next
+    /// lock's characters have a higher one, so a caller can start a new
+    /// line when it changes.
+    pub releases: usize,
 }
 
 /// A character waiting out the output delay.
@@ -235,10 +240,11 @@ impl SoftLock {
         if self.locked {
             self.advance_groups();
         }
+        let releases = self.releases;
         let events: Vec<LockEvent> = self
             .pending
             .drain(..)
-            .map(|p| LockEvent { ch: p.ch, bit_index: p.bit_index })
+            .map(|p| LockEvent { ch: p.ch, bit_index: p.bit_index, releases })
             .collect();
         self.emitted += events.len();
         self.locked = false;
@@ -490,7 +496,12 @@ impl SoftLock {
         let mut events = Vec::new();
         while self.pending.front().is_some_and(|item| item.end as i64 <= limit) {
             if let Some(item) = self.pending.pop_front() {
-                events.push(LockEvent { ch: item.ch, bit_index: item.bit_index });
+                // Counted before this step's release, as the Python lock does.
+                events.push(LockEvent {
+                    ch: item.ch,
+                    bit_index: item.bit_index,
+                    releases: self.releases,
+                });
             }
         }
 
@@ -767,7 +778,14 @@ mod tests {
                 let mut events = Vec::new();
                 let mut seen = 0;
                 for &value in &soft {
-                    events.extend(lock.push(value));
+                    let releases_before = lock.releases();
+                    let new_events = lock.push(value);
+                    // Characters come out before the step's own release is counted.
+                    assert!(
+                        new_events.iter().all(|e| e.releases == releases_before),
+                        "{variant}, {set}: release number of the characters"
+                    );
+                    events.extend(new_events);
                     if lock.comparisons() > seen {
                         // One new comparison has just been scored.
                         let want = &expected[seen];
@@ -786,7 +804,13 @@ mod tests {
                     }
                 }
                 assert_eq!(seen, expected.len(), "{variant}, {set}: number of comparisons");
-                events.extend(lock.finish());
+                let flushed = lock.finish();
+                assert!(flushed.iter().all(|e| e.releases == lock.releases()));
+                events.extend(flushed);
+                assert!(
+                    events.windows(2).all(|w| w[0].releases <= w[1].releases),
+                    "{variant}, {set}: release numbers should never go down"
+                );
 
                 // Every character, and the bit it came from, must match.
                 let want_chars = testutil::read_lock_chars(&testutil::vector_path(
