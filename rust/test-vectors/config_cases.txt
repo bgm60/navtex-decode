@@ -1,0 +1,578 @@
+### minimal_file
+profile: p
+--- toml
+[p]
+mode = "file"
+wav_file = "a.wav"
+--- result
+ok
+mode='file'
+wav_file='a.wav'
+device=None
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### defaults_only
+profile: p
+--- toml
+[p]
+mode = "live"
+--- result
+ok
+mode='live'
+wav_file=None
+device=None
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### empty_profile
+profile: p
+--- toml
+[p]
+--- result
+ok
+mode='live'
+wav_file=None
+device=None
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### everything_used
+profile: p
+--- toml
+[p]
+mode = "file"
+wav_file = "rec.wav"
+log_dir = "logs"
+db_file = "log.db"
+quiet = true
+sample_rate = 48000
+centre_freq = 1650
+tones_inverted = true
+loop_gain = 0
+signal_strength_window = 50
+--- result
+ok
+mode='file'
+wav_file='rec.wav'
+device=None
+log_dir='logs'
+db_file='log.db'
+quiet=True
+sample_rate=48000
+centre_freq=1650.0
+tones_inverted=True
+loop_gain=0.0
+signal_window=50
+
+### live_with_device_index
+profile: p
+--- toml
+[p]
+mode = "live"
+device = 2
+--- result
+ok
+mode='live'
+wav_file=None
+device=2
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### live_with_device_name
+profile: p
+--- toml
+[p]
+mode = "live"
+device = "USB Audio"
+--- result
+ok
+mode='live'
+wav_file=None
+device='USB Audio'
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### device_numeric_string_stays_a_string
+profile: p
+--- toml
+[p]
+mode = "live"
+device = "3"
+--- result
+ok
+mode='live'
+wav_file=None
+device='3'
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### int_widened_to_float
+profile: p
+--- toml
+[p]
+mode = "live"
+centre_freq = 1800
+loop_gain = 1
+--- result
+ok
+mode='live'
+wav_file=None
+device=None
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1800.0
+tones_inverted=False
+loop_gain=1.0
+signal_window=100
+
+### float_values
+profile: p
+--- toml
+[p]
+mode = "live"
+centre_freq = 1712.5
+loop_gain = 0.0125
+--- result
+ok
+mode='live'
+wav_file=None
+device=None
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1712.5
+tones_inverted=False
+loop_gain=0.0125
+signal_window=100
+
+### two_profiles_choose_second
+profile: second
+--- toml
+[first]
+mode = "live"
+
+[second]
+mode = "file"
+wav_file = "b.wav"
+--- result
+ok
+mode='file'
+wav_file='b.wav'
+device=None
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### quiet_with_log_dir
+profile: p
+--- toml
+[p]
+mode = "live"
+quiet = true
+log_dir = "x"
+--- result
+ok
+mode='live'
+wav_file=None
+device=None
+log_dir='x'
+db_file=None
+quiet=True
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### quiet_with_db_file
+profile: p
+--- toml
+[p]
+mode = "live"
+quiet = true
+db_file = "x.db"
+--- result
+ok
+mode='live'
+wav_file=None
+device=None
+log_dir=None
+db_file='x.db'
+quiet=True
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### comments_and_blank_lines
+profile: p
+--- toml
+# top
+
+[p]  # the profile
+mode = "file"  # how
+
+wav_file = "c.wav"
+--- result
+ok
+mode='file'
+wav_file='c.wav'
+device=None
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### literal_string_path
+profile: p
+--- toml
+[p]
+mode = "file"
+wav_file = 'C:\Users\me\rec.wav'
+--- result
+ok
+mode='file'
+wav_file='C:\\Users\\me\\rec.wav'
+device=None
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### bad_mode
+profile: p
+--- toml
+[p]
+mode = "tape"
+--- result
+error: mode must be "file" or "live", got 'tape'
+
+### file_without_wav_file
+profile: p
+--- toml
+[p]
+mode = "file"
+--- result
+error: mode = "file" requires wav_file to be set
+
+### quiet_without_a_log
+profile: p
+--- toml
+[p]
+mode = "live"
+quiet = true
+--- result
+error: quiet = true needs log_dir or db_file to be set, otherwise the decoder would produce no output at all
+
+### mode_wrong_type
+profile: p
+--- toml
+[p]
+mode = 5
+--- result
+error: mode: expected str, got int (5)
+
+### loop_gain_string
+profile: p
+--- toml
+[p]
+mode = "live"
+loop_gain = "abc"
+--- result
+error: loop_gain: expected float, got str ('abc')
+
+### quiet_integer
+profile: p
+--- toml
+[p]
+mode = "live"
+quiet = 1
+--- result
+error: quiet: expected bool, got int (1)
+
+### tones_inverted_string
+profile: p
+--- toml
+[p]
+mode = "live"
+tones_inverted = "yes"
+--- result
+error: tones_inverted: expected bool, got str ('yes')
+
+### device_float
+profile: p
+--- toml
+[p]
+mode = "live"
+device = 1.5
+--- result
+error: device: expected int or str, got float (1.5)
+
+### device_bool
+profile: p
+--- toml
+[p]
+mode = "live"
+device = true
+--- result
+error: device: expected int or str, got bool (True)
+
+### log_dir_integer
+profile: p
+--- toml
+[p]
+mode = "live"
+log_dir = 7
+--- result
+error: log_dir: expected str, got int (7)
+
+### wav_file_bool
+profile: p
+--- toml
+[p]
+mode = "file"
+wav_file = true
+--- result
+error: wav_file: expected str, got bool (True)
+
+### centre_freq_bool
+profile: p
+--- toml
+[p]
+mode = "live"
+centre_freq = true
+--- result
+error: centre_freq: expected float, got bool (True)
+
+### sample_rate_float
+profile: p
+--- toml
+[p]
+mode = "live"
+sample_rate = 48000.0
+--- result
+error: sample_rate: expected int, got float (48000.0)
+
+### signal_window_string
+profile: p
+--- toml
+[p]
+mode = "live"
+signal_strength_window = "100"
+--- result
+error: signal_strength_window: expected int, got str ('100')
+
+### array_value
+profile: p
+--- toml
+[p]
+mode = "live"
+log_dir = [1, 2]
+--- result
+error: log_dir: expected str, got list ([1, 2])
+
+### string_with_apostrophe
+profile: p
+--- toml
+[p]
+mode = "live"
+loop_gain = "it's"
+--- result
+error: loop_gain: expected float, got str ("it's")
+
+### centre_freq_too_low
+profile: p
+--- toml
+[p]
+mode = "live"
+centre_freq = 50
+--- result
+error: centre_freq (50 Hz) puts the tones at -35 and 135 Hz; both must be between 0 Hz and half the sample rate (24000 Hz).
+
+### centre_freq_too_high
+profile: p
+--- toml
+[p]
+mode = "live"
+centre_freq = 24000
+--- result
+error: centre_freq (24000 Hz) puts the tones at 23915 and 24085 Hz; both must be between 0 Hz and half the sample rate (24000 Hz).
+
+### mark_freq_replaced
+profile: p
+--- toml
+[p]
+mode = "live"
+mark_freq = 1785.0
+--- result
+error: [p] uses 'mark_freq', which is no longer used: the tones are now set with centre_freq (the midpoint between mark and space, which are always 170 Hz apart) and tones_inverted (true if mark is the lower tone). Please edit the profile to use those instead.
+
+### space_freq_replaced
+profile: p
+--- toml
+[p]
+mode = "live"
+space_freq = 1615.0
+--- result
+error: [p] uses 'space_freq', which is no longer used: the tones are now set with centre_freq (the midpoint between mark and space, which are always 170 Hz apart) and tones_inverted (true if mark is the lower tone). Please edit the profile to use those instead.
+
+### missing_profile
+profile: nope
+--- toml
+[a]
+mode = "live"
+
+[b]
+mode = "live"
+--- result
+error: no profile named 'nope' in <FILE>. Available profiles: a, b
+
+### missing_profile_no_sections
+profile: p
+--- toml
+# nothing here
+--- result
+error: no profile named 'p' in <FILE>. Available profiles: (none defined)
+
+### profile_is_not_a_table
+profile: p
+--- toml
+p = 3
+--- result
+error: [p] must be a table of key = value pairs
+
+### first_error_wins_in_file_order
+profile: p
+--- toml
+[p]
+mode = "live"
+loop_gain = "x"
+quiet = 2
+--- result
+error: loop_gain: expected float, got str ('x')
+
+### example:weak_signal_file
+profile: weak_signal_file
+--- toml
+@example
+--- result
+ok
+mode='file'
+wav_file='recording.wav'
+device=None
+log_dir='logs/'
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### example:live_default
+profile: live_default
+--- toml
+@example
+--- result
+ok
+mode='live'
+wav_file=None
+device=4
+log_dir='D:/Radio/Logs/580kHz/'
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### example:weak_signal
+profile: weak_signal
+--- toml
+@example
+--- result
+ok
+mode='live'
+wav_file=None
+device=None
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.05
+signal_window=100
+
+### example:conservative
+profile: conservative
+--- toml
+@example
+--- result
+ok
+mode='file'
+wav_file='recording.wav'
+device=None
+log_dir=None
+db_file=None
+quiet=False
+sample_rate=48000
+centre_freq=1700.0
+tones_inverted=False
+loop_gain=0.19
+signal_window=100

@@ -5,6 +5,7 @@
 //! lines, the outputs (console, text log, database), and the audio input
 //! (WAV files so far; live audio and settings come in later steps).
 
+pub mod config;
 pub mod console;
 pub mod lines;
 pub mod pipeline;
