@@ -1,0 +1,34 @@
+# NAVTEX decoder (navtex-cli) - example settings.
+#
+# Copy this file to navtex.toml (the default for --config) and edit it.
+# Run a profile with:   navtex-cli <profile> [--config navtex.toml]
+#
+# Each [section] is one self-contained profile. A key you leave out takes
+# the built-in default shown in the comments. Paths in single quotes ('...')
+# are taken literally, which is the easiest way to write a Windows path.
+
+# --- Live decoding from a sound card (see: navtex-cli --list-devices) ---
+[live]
+mode = "live"
+# device = 2                 # its number in --list-devices, or part of its name;
+                             # leave out for the system's default input
+log_dir = 'logs'             # a text log is written here (the folder is created)
+db_file = 'navtex.db'        # SQLite log of every line (use a local disk)
+# centre_freq = 1700.0       # Hz, the midpoint of the two tones (170 Hz apart)
+# tones_inverted = false     # true if the mark tone is the lower one
+# loop_gain = 0.05           # bit-clock loop gain
+# signal_quality_window = 100  # decisions averaged for the 00-99 quality reading
+
+# --- A receiver whose audio is the other way up ---
+[live_inverted]
+mode = "live"
+device = "USB Audio"
+tones_inverted = true
+log_dir = 'logs'
+
+# --- Decoding a recording; nothing on the console, everything logged ---
+[recording]
+mode = "file"
+wav_file = 'recording.wav'   # 48000 Hz; 8, 16, 24 or 32-bit integer or 32-bit float
+db_file = 'recording.db'
+quiet = true                 # needs log_dir or db_file

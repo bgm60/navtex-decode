@@ -750,4 +750,21 @@ mod tests {
         assert!(loaded.warnings.iter().any(|w| w.contains("'sync_window' is ignored")));
         assert_eq!(loaded.profile.loop_gain, 0.19);
     }
+
+    #[test]
+    fn the_rust_example_file_loads_cleanly() {
+        let path = format!("{}/../navtex.example.toml", env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(path).unwrap();
+        let table: toml::Table = text.parse().unwrap();
+        let names: Vec<&String> = table.keys().collect();
+        assert_eq!(names, ["live", "live_inverted", "recording"]);
+        for name in names {
+            let loaded = parse_profile(&text, "navtex.example.toml", name).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(loaded.warnings.is_empty(), "{name}: {:?}", loaded.warnings);
+        }
+        let inverted = parse_profile(&text, "x", "live_inverted").unwrap().profile;
+        assert!(inverted.tones_inverted && inverted.device == Some(Device::Name("USB Audio".into())));
+        let recording = parse_profile(&text, "x", "recording").unwrap().profile;
+        assert!(recording.quiet && recording.mode == Mode::File);
+    }
 }

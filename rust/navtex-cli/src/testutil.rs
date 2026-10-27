@@ -25,7 +25,7 @@ pub fn sets_with(file: &str) -> Vec<String> {
         .filter_map(|entry| entry.file_name().into_string().ok())
         .collect();
     names.sort();
-    assert!(!names.is_empty(), "no reference sets with {file} in {root}; run rust/tools/dump_lines.py");
+    assert!(!names.is_empty(), "no reference sets with {file} in {root}; see PROVENANCE.md");
     names
 }
 
