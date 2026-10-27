@@ -85,7 +85,10 @@ fn help_succeeds_and_describes_the_options() {
         let output = run_cli(&[flag]);
         assert!(output.status.success());
         let text = stdout(&output);
-        for want in ["Usage: navtex-cli", "--wav <FILE>", "--config <PATH>", "--quiet", "--no-quiet", "Exit status"] {
+        for want in [
+            "Usage: navtex-cli", "--wav <FILE>", "--config <PATH>", "--quiet", "--no-quiet", "--list-devices", "--level",
+            "Exit status", "Ctrl+C",
+        ] {
             assert!(text.contains(want), "{flag}: missing {want:?} in\n{text}");
         }
     }
@@ -238,7 +241,6 @@ fn settings_mistakes_exit_with_2_and_say_what_is_wrong() {
         ("window_type = 'hann'\n", "window_type = 'hann' is not supported"),
         ("oversample = 4\n", "oversample = 4 is not supported"),
         ("sample_rate = 44100\n", "sample_rate = 44100 is not supported"),
-        ("mode = 'live'\n", "live audio is not available yet"),
     ];
     for (body, want) in cases {
         let config = write_config(&dir, body);
@@ -364,4 +366,126 @@ fn a_cut_short_recording_decodes_what_is_there_then_reports_the_error() {
     assert!(body.starts_with(&full[..60]), "the text should begin as the whole recording's does");
     let message = stderr(&output);
     assert!(message.contains("error:") && message.contains("ended early or is damaged"), "{message}");
+}
+
+// --- Step 6: live audio, the level meter, stopping ---------------------------
+//
+// These tests must pass on a computer with or without a sound card, and must
+// never wait for live audio, so they only try devices that cannot exist.
+
+#[test]
+fn listing_devices_works_with_or_without_a_sound_card() {
+    let output = run_cli(&["--list-devices"]);
+    match output.status.code() {
+        Some(0) => {
+            assert!(stdout(&output).starts_with("Audio input devices ("), "{}", stdout(&output));
+            assert!(stdout(&output).contains("  0: "), "{}", stdout(&output));
+            assert!(stdout(&output).contains("device = ..."));
+        }
+        Some(1) => assert!(stderr(&output).contains("error:"), "{}", stderr(&output)),
+        other => panic!("unexpected exit status {other:?}: {}", stderr(&output)),
+    }
+}
+
+#[test]
+fn a_live_profile_with_a_device_that_does_not_exist_exits_with_1() {
+    let dir = TempDir::new("nodevice");
+    for (setting, want) in [
+        ("device = 99", "device 99 does not exist"),
+        ("device = '99'", "device 99 does not exist"),
+        ("device = 'no-such-device-xyz'", "has \"no-such-device-xyz\" in its name"),
+    ] {
+        let config = write_config(&dir, &format!("mode = 'live'\n{setting}\n"));
+        let output = run_cli(&["p", "--config", &config]);
+        assert_eq!(output.status.code(), Some(1), "{setting}: {}", stderr(&output));
+        assert_eq!(stdout(&output), "", "{setting}");
+        assert!(stderr(&output).contains(want), "{setting}: {}", stderr(&output));
+    }
+}
+
+#[test]
+fn the_level_meter_shows_the_level_and_quality_and_logs_nothing() {
+    let dir = TempDir::new("level");
+    let logs = dir.0.join("logs");
+    let db = dir.0.join("l.db");
+    let config = write_config(
+        &dir,
+        &format!("mode = 'file'\nwav_file = '{}'\nlog_dir = {}\ndb_file = {}\n", wav(CLIP), literal(&logs), literal(&db)),
+    );
+    let output = run_cli(&["p", "--config", &config, "--level"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.starts_with(&format!("Decoding file: {}\nInput level meter: nothing is logged.\n", wav(CLIP))), "{text}");
+    let redraws = text.matches('\r').count();
+    assert!(redraws > 100, "about ten readings a second: {redraws}");
+    assert!(text.contains("Level [") && text.contains(" dBFS") && text.contains("Quality"), "{text}");
+    assert!(text.contains("Locked") && text.contains("Searching"), "the recording starts unlocked and then locks");
+    assert!(!text.contains("STORM"), "the decoded text is not printed");
+    assert!(!logs.exists() && !db.exists(), "nothing is logged in level mode");
+}
+
+#[test]
+fn the_level_meter_cannot_be_combined_with_quiet() {
+    let dir = TempDir::new("levelq");
+    let db = dir.0.join("q.db");
+    let config = write_config(&dir, &format!("mode = 'file'\nwav_file = '{}'\ndb_file = {}\nquiet = true\n", wav(CLIP), literal(&db)));
+    let output = run_cli(&["p", "--config", &config, "--level"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("--level"), "{}", stderr(&output));
+}
+
+/// Ctrl+C in the middle of a recording: the text so far is kept, the logs are
+/// closed and the program says so and exits normally.
+///
+/// The recording is fed through a named pipe, so the test controls exactly
+/// when the program is in the middle of reading it.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_stops_decoding_cleanly_and_keeps_the_logs() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let dir = TempDir::new("ctrlc");
+    let fifo = dir.0.join("live.wav");
+    assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success(), "mkfifo failed");
+    let db = dir.0.join("c.db");
+    let config = write_config(&dir, &format!("mode = 'file'\nwav_file = {}\ndb_file = {}\n", literal(&fifo), literal(&db)));
+    let bytes = std::fs::read(vectors().join("real_clip1").join("input.wav")).unwrap();
+
+    let child = Command::new(env!("CARGO_BIN_EXE_navtex-cli"))
+        .args(["p", "--config", &config])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id().to_string();
+    let mut pipe = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
+    // Half of the recording, then a pause with the program waiting for more.
+    let first = bytes.len() / 2;
+    pipe.write_all(&bytes[..first]).unwrap();
+    pipe.flush().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    assert!(Command::new("kill").args(["-INT", &pid]).status().unwrap().success());
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    // The rest arrives; the program has been asked to stop, so it must not decode it.
+    let _ = pipe.write_all(&bytes[first..]);
+    drop(pipe);
+
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.ends_with("\n\nStopped by user.\n"), "{text:?}");
+    let status = format!("Decoding file: {}\nLogging decoded lines to database: {}\n", fifo.display(), db.display());
+    let body = text.strip_prefix(&status).unwrap();
+    let body = body.strip_suffix("\n\nStopped by user.\n").unwrap();
+    let full = python_text("real_clip1");
+    assert!(body.len() > 60 && body.len() < full.len() - 30, "stopped part-way: {} of {}", body.len(), full.len());
+    assert!(full.starts_with(&body[..body.len() - 20]), "what was decoded is the start of the full text\n{body:?}\n{full:?}");
+
+    // The database was closed properly with the lines so far in it.
+    let rows: i64 = rusqlite::Connection::open(&db)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM navtex_log", [], |r| r.get(0))
+        .unwrap();
+    assert!(rows >= 5, "{rows}");
 }

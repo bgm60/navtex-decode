@@ -9,3 +9,5 @@ hound = "3.5"
 rusqlite = { version = "0.41.0", features = ["bundled"] }
 toml = { version = "1.1.8", features = ["preserve_order"] }
 clap = { version = "4.6.7", features = ["derive"] }
+cpal = "0.18.2"
+ctrlc = "3.5.2"

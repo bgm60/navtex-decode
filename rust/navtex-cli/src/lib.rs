@@ -3,10 +3,12 @@
 //! The decoding itself lives in `navtex-core`. This crate adds what is
 //! around it: the signal-quality meter, the assembly of characters into
 //! lines, the outputs (console, text log, database), and the audio input
-//! (WAV files so far; live audio and settings come in later steps).
+//! (WAV files and live sound-card input), the settings file and the level meter.
 
+pub mod audio;
 pub mod config;
 pub mod console;
+pub mod level;
 pub mod lines;
 pub mod pipeline;
 pub mod quality;
